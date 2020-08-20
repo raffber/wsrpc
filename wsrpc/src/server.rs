@@ -16,7 +16,7 @@ use std::pin::Pin;
 use futures::SinkExt;
 use serde::de::DeserializeOwned;
 
-type FutureResponse<Resp> =  Pin<Box<dyn 'static + Send + Future<Output=Option<Resp>>>>;
+type FutureResponse<Resp> = Pin<Box<dyn 'static + Send + Future<Output=Resp>>>;
 type Handler<Req, Resp> = dyn 'static + Send + Fn(Server<Req, Resp>, Req) -> FutureResponse<Resp>;
 
 struct RequestHandler<Req: Message, Resp: Message> {
@@ -26,7 +26,7 @@ struct RequestHandler<Req: Message, Resp: Message> {
 impl<Req: Message, Resp: Message> RequestHandler<Req, Resp> {
     fn new<Fut, Fun>(handler: Fun) -> Self
         where
-            Fut: 'static + Send + Future<Output=Option<Resp>>,
+            Fut: 'static + Send + Future<Output=Resp>,
             Fun: 'static + Send + Fn(Server<Req, Resp>, Req) -> Fut
     {
         Self {
@@ -44,14 +44,16 @@ impl<Req: Message, Resp: Message> RequestHandler<Req, Resp> {
     }
 }
 
-enum ResponseMsg<M: Message> {
+#[derive(Clone)]
+enum ResponseMsg<Req: Message, Resp: Message> {
     Drop,
     Pong(Vec<u8>),
-    Message(Response<M>),
+    Message(Response<Resp>),
+    Request(Request<Req>),
 }
 
 pub struct ServerShared<Req: Message, Resp: Message> {
-    connections: HashMap<Uuid, UnboundedSender<ResponseMsg<Resp>>>,
+    connections: HashMap<Uuid, UnboundedSender<ResponseMsg<Req, Resp>>>,
     handler: RequestHandler<Req, Resp>,
 }
 
@@ -63,18 +65,17 @@ pub struct Server<Req: Message, Resp: Message> {
 impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<Req, Resp> {
     pub(crate) fn new<Fut, Fun>(fun: Fun) -> Self
         where
-            Fut: 'static + Send + Future<Output=Option<Resp>>,
+            Fut: 'static + Send + Future<Output=Resp>,
             Fun: 'static + Send + Fn(Server<Req, Resp>, Req) -> Fut
-        {
+    {
         let handler = RequestHandler::new(fun);
         let inner = ServerShared {
             connections: Default::default(),
-            handler
+            handler,
         };
-        Self{
+        Self {
             inner: Arc::new(RwLock::new(inner))
         }
-
     }
 
     pub async fn listen<A: ToSocketAddrs>(&self, addr: A) {
@@ -92,7 +93,9 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         }
     }
 
-    async fn run_client(self, id: Uuid, stream: TcpStream, mut rx_resp: UnboundedReceiver<ResponseMsg<Resp>>, tx_resp: UnboundedSender<ResponseMsg<Resp>>) {
+    async fn run_client(self, id: Uuid, stream: TcpStream,
+                        mut rx_resp: UnboundedReceiver<ResponseMsg<Req, Resp>>,
+                        tx_resp: UnboundedSender<ResponseMsg<Req, Resp>>) {
         let ws_stream = accept_async(stream).await.unwrap();
         let (mut write, mut read) = ws_stream.split();
         let server = self.clone();
@@ -107,6 +110,12 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                     }
                     ResponseMsg::Drop => break,
                     ResponseMsg::Message(msg) => {
+                        let data = serde_json::to_string(&msg).unwrap();
+                        if let Err(_) = write.send(tungstenite::Message::Text(data)).await {
+                            break;
+                        }
+                    }
+                    ResponseMsg::Request(msg) => {
                         let data = serde_json::to_string(&msg).unwrap();
                         if let Err(_) = write.send(tungstenite::Message::Text(data)).await {
                             break;
@@ -131,7 +140,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
     }
 
     async fn handle_rx(&self, client_id: Uuid, msg: Result<tungstenite::Message, tungstenite::Error>,
-                       tx_resp: &UnboundedSender<ResponseMsg<Resp>>) -> bool {
+                       tx_resp: &UnboundedSender<ResponseMsg<Req, Resp>>) -> bool {
         match msg {
             Ok(msg) => {
                 match msg {
@@ -148,7 +157,8 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                             }
                         }
                     }
-                    tungstenite::Message::Ping(data) => tx_resp.send(ResponseMsg::Pong(data)).is_ok(),
+                    tungstenite::Message::Ping(data) =>
+                        tx_resp.send(ResponseMsg::Pong(data)).is_ok(),
                     tungstenite::Message::Close(_) => false,
                     _ => true
                 }
@@ -159,19 +169,19 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
 
     async fn handle_valid_msg(&self, msg: Request<Req>) {
         let server = self.clone();
+        let req = msg.clone();
         let id = msg.id;
         let reply = {
             let read = server.inner.read().await;
             read.handler.call(server.clone(), msg.message)
         };
         task::spawn(async move {
-            if let Some(reply) = reply.await {
-                let resp = Response::Success {
-                    request: id,
-                    message: reply,
-                };
-                server.broadcast(resp).await;
-            }
+            server.broadcast(ResponseMsg::Request(req)).await;
+            let resp = Response::Success {
+                request: id,
+                message: reply.await,
+            };
+            server.broadcast(ResponseMsg::Message(resp)).await;
         });
     }
 
@@ -190,13 +200,12 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         }
     }
 
-    async fn broadcast(&self, resp: Response<Resp>) {
-        debug!("Broadcasting: {}", serde_json::to_string(&resp).unwrap());
+    async fn broadcast(&self, resp: ResponseMsg<Req, Resp>) {
         let mut to_remove = HashSet::new();
         {
             let read = self.inner.read().await;
             for (id, con) in &read.connections {
-                if let Err(_) = con.send(ResponseMsg::Message(resp.clone())) {
+                if let Err(_) = con.send(resp.clone()) {
                     to_remove.insert(*id);
                 }
             }
@@ -215,7 +224,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         write.connections.clear();
     }
 
-    pub async fn remove_client(&self, id: &Uuid) {
+    async fn remove_client(&self, id: &Uuid) {
         let mut write = self.inner.write().await;
         if let Some(client) = write.connections.remove(&id) {
             let _ = client.send(ResponseMsg::Drop);
