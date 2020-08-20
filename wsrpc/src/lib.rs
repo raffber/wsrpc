@@ -1,23 +1,27 @@
+#![allow(dead_code)]
+
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
-trait Message : Send + Clone + Serialize + Deserialize {}
-impl<T: Send + Clone + Serialize + Deserialize> Message for T {}
+mod client;
+mod server;
 
-struct Request<M: Message> {
-    client_id: Uuid,
-    request_id: Uuid,
+pub trait Message: Send + Clone + Serialize {}
+
+impl<T: Send + Clone + Serialize> Message for T {}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Request<M: Message> {
+    id: Uuid,
     message: M,
 }
 
-type Handler<Req: Message, Resp: Message> = Box<dyn Fn(Request<Req>) -> Option<Resp>>;
-
-struct Server<Req: Message, Resp: Message> {
-
-    handler: Handler<Req, Resp>
-
+#[derive(Clone, Serialize, Deserialize)]
+pub enum Response<M: Message> {
+    Success {
+        request: Uuid,
+        message: M,
+    },
+    Error(String)
 }
 
-impl<Req: Message, Resp: Message> Server<Req, Resp> {
-
-}

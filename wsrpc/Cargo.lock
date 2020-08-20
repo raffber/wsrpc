@@ -640,6 +640,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d34ca54d84bf2b5b4d7d31e901a8464f7b60ac145a284fba25ceb801f2ddccd"
 dependencies = [
  "bytes",
+ "fnv",
  "iovec",
  "lazy_static",
  "libc",
@@ -647,6 +648,7 @@ dependencies = [
  "mio",
  "mio-uds",
  "pin-project-lite",
+ "slab",
 ]
 
 [[package]]
@@ -809,6 +811,7 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "futures",
+ "log",
  "serde",
  "serde_json",
  "tokio",
