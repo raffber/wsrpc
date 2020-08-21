@@ -86,6 +86,9 @@ class Connection(object):
         finally:
             self._server.unregister_client(self)
 
+    async def send(self, msg):
+        await self._ws.send(msg)
+
     async def _loop(self):
         msg = await self._ws.recv()
         try:
