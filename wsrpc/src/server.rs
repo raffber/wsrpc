@@ -16,7 +16,7 @@ use serde::de::DeserializeOwned;
 
 
 #[derive(Clone)]
-enum ResponseMsg<Req: Message, Resp: Message> {
+enum SenderMsg<Req: Message, Resp: Message> {
     Drop,
     Pong(Vec<u8>),
     Message(Response<Resp>),
@@ -24,7 +24,7 @@ enum ResponseMsg<Req: Message, Resp: Message> {
 }
 
 struct ServerShared<Req: Message, Resp: Message> {
-    connections: HashMap<Uuid, UnboundedSender<ResponseMsg<Req, Resp>>>,
+    connections: HashMap<Uuid, UnboundedSender<SenderMsg<Req, Resp>>>,
 }
 
 #[derive(Clone)]
@@ -44,7 +44,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Reply<R
             message: resp,
         };
         task::spawn(async move {
-            self.server.broadcast_internal(ResponseMsg::Message(resp)).await;
+            self.server.broadcast_internal(SenderMsg::Message(resp)).await;
         });
     }
 }
@@ -62,7 +62,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Request
             message: resp,
         };
         task::spawn(async move {
-            self.server.broadcast_internal(ResponseMsg::Message(resp)).await;
+            self.server.broadcast_internal(SenderMsg::Message(resp)).await;
         });
     }
 
@@ -113,8 +113,8 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
     }
 
     async fn run_client(self, id: Uuid, stream: TcpStream,
-                        mut rx_resp: UnboundedReceiver<ResponseMsg<Req, Resp>>,
-                        tx_resp: UnboundedSender<ResponseMsg<Req, Resp>>,
+                        mut rx_resp: UnboundedReceiver<SenderMsg<Req, Resp>>,
+                        tx_resp: UnboundedSender<SenderMsg<Req, Resp>>,
                         tx_req: UnboundedSender<Requested<Req, Resp>>) {
         let ws_stream = accept_async(stream).await.unwrap();
         let (mut write, mut read) = ws_stream.split();
@@ -123,19 +123,19 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
             // TODO: regular pings to detect drops
             while let Some(x) = rx_resp.recv().await {
                 match x {
-                    ResponseMsg::Pong(x) => {
+                    SenderMsg::Pong(x) => {
                         if let Err(_) = write.send(tungstenite::Message::Pong(x)).await {
                             break;
                         }
                     }
-                    ResponseMsg::Drop => break,
-                    ResponseMsg::Message(msg) => {
+                    SenderMsg::Drop => break,
+                    SenderMsg::Message(msg) => {
                         let data = serde_json::to_string(&msg).unwrap();
                         if let Err(_) = write.send(tungstenite::Message::Text(data)).await {
                             break;
                         }
                     }
-                    ResponseMsg::Request(msg) => {
+                    SenderMsg::Request(msg) => {
                         let data = serde_json::to_string(&msg).unwrap();
                         if let Err(_) = write.send(tungstenite::Message::Text(data)).await {
                             break;
@@ -161,7 +161,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
 
     async fn handle_rx(&self, client_id: Uuid,
                        msg: Result<tungstenite::Message, tungstenite::Error>,
-                       tx_resp: &UnboundedSender<ResponseMsg<Req, Resp>>,
+                       tx_resp: &UnboundedSender<SenderMsg<Req, Resp>>,
                        tx_req: &UnboundedSender<Requested<Req, Resp>>,
     ) -> bool {
         match msg {
@@ -181,7 +181,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                         }
                     }
                     tungstenite::Message::Ping(data) =>
-                        tx_resp.send(ResponseMsg::Pong(data)).is_ok(),
+                        tx_resp.send(SenderMsg::Pong(data)).is_ok(),
                     tungstenite::Message::Close(_) => false,
                     _ => true
                 }
@@ -194,7 +194,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         let server = self.clone();
         let req = msg.clone();
         let id = msg.id;
-        server.broadcast_internal(ResponseMsg::Request(req)).await;
+        server.broadcast_internal(SenderMsg::Request(req)).await;
         tx_req.send(Requested {
             msg: msg.message,
             id,
@@ -211,21 +211,21 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
     async fn send(&self, id: &Uuid, msg: Response<Resp>) {
         let mut write = self.inner.write().await;
         if let Some(con) = write.connections.get(id) {
-            if let Err(_) = con.send(ResponseMsg::Message(msg)) {
+            if let Err(_) = con.send(SenderMsg::Message(msg)) {
                 write.connections.remove(id);
             }
         }
     }
 
     pub async fn broadcast(&self, resp: Resp) {
-        let msg = ResponseMsg::Message(Response::Broadcast(resp));
+        let msg = SenderMsg::Message(Response::Broadcast(resp));
         let server = self.clone();
         task::spawn(async move {
             server.broadcast_internal(msg).await;
         });
     }
 
-    async fn broadcast_internal(&self, resp: ResponseMsg<Req, Resp>) {
+    async fn broadcast_internal(&self, resp: SenderMsg<Req, Resp>) {
         let mut to_remove = HashSet::new();
         {
             let read = self.inner.read().await;
@@ -244,7 +244,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         info!("Closing all client connections.");
         let mut write = self.inner.write().await;
         for (_id, con) in &write.connections {
-            let _ = con.send(ResponseMsg::Drop);
+            let _ = con.send(SenderMsg::Drop);
         }
         write.connections.clear();
     }
@@ -252,7 +252,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
     async fn remove_client(&self, id: &Uuid) {
         let mut write = self.inner.write().await;
         if let Some(client) = write.connections.remove(&id) {
-            let _ = client.send(ResponseMsg::Drop);
+            let _ = client.send(SenderMsg::Drop);
         }
     }
 }
