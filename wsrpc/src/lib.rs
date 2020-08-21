@@ -4,7 +4,7 @@ use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
 mod client;
-mod server;
+pub mod server;
 
 pub trait Message: Send + Clone + Serialize {}
 
@@ -18,10 +18,11 @@ struct Request<M: Message> {
 
 #[derive(Clone, Serialize, Deserialize)]
 enum Response<M: Message> {
-    Success {
+    Reply {
         request: Uuid,
         message: M,
     },
+    Broadcast(M),
     Error(String)
 }
 
