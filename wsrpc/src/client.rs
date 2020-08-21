@@ -4,7 +4,6 @@ use std::time::{Instant, Duration};
 use tokio::time::delay_for;
 use std::io;
 use tokio::io::ErrorKind;
-use tungstenite::Error as WsError;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel, UnboundedReceiver};
 use tokio::sync::broadcast::{Sender as BcSender, Receiver as BcReceiver, channel as bc_channel};
 use tokio::task;
@@ -88,11 +87,11 @@ impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<
         };
         let client = ret.clone();
         task::spawn(async move {
-            client.receiver(read, receiver_tx)
+            client.receiver(read, receiver_tx).await
         });
         let client = ret.clone();
         task::spawn(async move {
-            client.sender(write, sender_rx)
+            client.sender(write, sender_rx).await
         });
         ret
     }
@@ -111,7 +110,7 @@ impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<
                         if tx.send(msg).is_err() {
                             break;
                         }
-                    },
+                    }
                     _ => {}
                 }
             }
@@ -129,7 +128,7 @@ impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<
                         if tx.send(msg).is_err() {
                             break;
                         }
-                    },
+                    }
                     Response::Reply { request: _, message } => {
                         if tx.send(message).is_err() {
                             break;
@@ -162,12 +161,11 @@ impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<
 
     pub fn send(&self, msg: Req) -> Option<Uuid> {
         let id = Uuid::new_v4();
-        let msg = SenderMsg::Message(
-            Request {
-                id: id.clone(),
-                message: msg
-            }
-        );
+        let msg = Request {
+            id: id.clone(),
+            message: msg,
+        };
+        let msg = SenderMsg::Message(msg);
         self.tx.send(msg).ok().map(|_| id)
     }
 
@@ -194,7 +192,7 @@ impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<
             Ok(x) => x,
             Err(_) => {
                 Err(ClientError::Timeout)
-            },
+            }
         }
     }
 
@@ -204,6 +202,7 @@ impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<
                 Ok(msg) => {
                     match msg {
                         tungstenite::Message::Text(text) => {
+                            log::debug!("Received: {}", text);
                             if let Ok(resp) = serde_json::from_str::<Response<Resp>>(&text) {
                                 if tx.send(resp).is_err() {
                                     break;
@@ -243,6 +242,7 @@ impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<
                 }
                 SenderMsg::Message(msg) => {
                     let data = serde_json::to_string(&msg).unwrap();
+                    log::debug!("Sending: {}", data);
                     let msg = tungstenite::Message::Text(data);
                     if write.send(msg).await.is_err() {
                         break;
@@ -250,6 +250,7 @@ impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<
                 }
             }
         }
+        log::debug!("Stop Send");
     }
 }
 

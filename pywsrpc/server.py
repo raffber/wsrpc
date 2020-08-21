@@ -102,7 +102,7 @@ class Connection(object):
         if 'id' not in msg:
             # not a request
             return
-        if not isinstance(msg['id'], str) or not isinstance(msg['message'], dict):
+        if not isinstance(msg['id'], str):
             await self._server.send_error("Invalid UUID")
             return
         id = msg['id']
