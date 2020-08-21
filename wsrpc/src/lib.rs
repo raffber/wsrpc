@@ -3,7 +3,7 @@
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
-mod client;
+pub mod client;
 pub mod server;
 
 pub trait Message: Send + Clone + Serialize {}

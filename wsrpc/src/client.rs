@@ -11,11 +11,11 @@ use tokio::task;
 use tokio::net::TcpStream;
 use futures::stream::{SplitStream, SplitSink};
 use futures::{SinkExt, StreamExt};
-use tungstenite::http::Uri;
 use serde::de::DeserializeOwned;
 use uuid::Uuid;
 use thiserror::Error;
 use tokio::time::timeout;
+use url::Url;
 
 type WsStream = WebSocketStream<TcpStream>;
 
@@ -23,7 +23,7 @@ const BC_CHANNEL_SIZE: usize = 1000;
 
 pub type LogLevel = i32;
 
-type Monitor<Resp> = BcReceiver<Response<Resp>>;
+pub type Monitor<Resp> = BcReceiver<Response<Resp>>;
 
 #[derive(Error, Debug)]
 pub enum ClientError {
@@ -45,15 +45,15 @@ enum SenderMsg<Req: Message> {
 }
 
 #[derive(Clone)]
-struct Client<Req: Message, Resp: Message> {
+pub struct Client<Req: Message, Resp: Message> {
     tx: UnboundedSender<SenderMsg<Req>>,
     tx_bc: BcSender<Response<Resp>>,
 }
 
 impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<Req, Resp> {
-    pub async fn connect<A>(url: A, timeout: f32) -> io::Result<Self>
+    pub async fn connect<A>(url: A, duration: Duration) -> io::Result<Self>
         where
-            A: Into<Uri>
+            A: Into<Url>
     {
         let start = Instant::now();
         let url = url.into();
@@ -69,7 +69,7 @@ impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<
                 }
                 _ => {}
             }
-            if start.elapsed().as_secs_f32() > timeout {
+            if start.elapsed().as_secs_f32() > duration.as_secs_f32() {
                 break;
             }
             delay_for(Duration::from_millis(10)).await;
@@ -174,7 +174,7 @@ impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<
         let _ = self.tx.send(SenderMsg::Drop);
     }
 
-    async fn do_query_no_timeout(&self, req: Req) -> Result<Resp, ClientError> {
+    pub async fn do_query_no_timeout(&self, req: Req) -> Result<Resp, ClientError> {
         let mut replies = self.replies();
         if let Some(id) = self.send(req) {
             while let Some((reply, rx_id)) = replies.recv().await {
@@ -188,7 +188,7 @@ impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<
         }
     }
 
-    async fn query(&self, req: Req, duration: Duration) -> Result<Resp, ClientError> {
+    pub async fn query(&self, req: Req, duration: Duration) -> Result<Resp, ClientError> {
         match timeout(duration, self.do_query_no_timeout(req)).await {
             Ok(x) => x,
             Err(_) => {
