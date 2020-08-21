@@ -32,6 +32,23 @@ pub struct Server<Req: Message, Resp: Message> {
     inner: Arc<RwLock<ServerShared<Req, Resp>>>,
 }
 
+pub struct Reply<Req: Message, Resp: Message> {
+    id: Uuid,
+    server: Server<Req, Resp>,
+}
+
+impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Reply<Req, Resp> {
+    pub fn answer(self, resp: Resp) {
+        let resp = Response::Reply {
+            request: self.id,
+            message: resp,
+        };
+        task::spawn(async move {
+            self.server.broadcast_internal(ResponseMsg::Message(resp)).await;
+        });
+    }
+}
+
 pub struct Requested<Req: Message, Resp: Message> {
     msg: Req,
     id: Uuid,
@@ -51,6 +68,13 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Request
 
     pub fn msg(&self) -> &Req {
         &self.msg
+    }
+
+    pub fn take(self) -> (Req, Reply<Req, Resp>) {
+        (self.msg, Reply {
+            id: self.id,
+            server: self.server
+        })
     }
 }
 
