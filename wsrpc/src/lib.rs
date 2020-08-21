@@ -22,7 +22,7 @@ pub enum Response<M: Message> {
         request: Uuid,
         message: M,
     },
-    Broadcast(M),
+    Notify(M),
     Error(String)
 }
 

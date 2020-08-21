@@ -63,10 +63,11 @@ impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<
                 Ok((stream, _)) => {
                     return Ok(Self::with_stream(stream));
                 }
-                Err(WsError::Io(x)) => {
-                    // this is fatal
-                    return Err(x);
-                }
+                // TODO: filter by fatal errors
+                // Err(WsError::Io(x)) => {
+                //     // this is fatal
+                //     return Err(x);
+                // }
                 _ => {}
             }
             if start.elapsed().as_secs_f32() > duration.as_secs_f32() {
@@ -106,7 +107,7 @@ impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<
         task::spawn(async move {
             while let Ok(req) = rx_bc.recv().await {
                 match req {
-                    Response::Broadcast(msg) => {
+                    Response::Notify(msg) => {
                         if tx.send(msg).is_err() {
                             break;
                         }
@@ -124,7 +125,7 @@ impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<
         task::spawn(async move {
             while let Ok(req) = rx_bc.recv().await {
                 match req {
-                    Response::Broadcast(msg) => {
+                    Response::Notify(msg) => {
                         if tx.send(msg).is_err() {
                             break;
                         }

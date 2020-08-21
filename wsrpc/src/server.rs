@@ -218,7 +218,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
     }
 
     pub async fn broadcast(&self, resp: Resp) {
-        let msg = SenderMsg::Message(Response::Broadcast(resp));
+        let msg = SenderMsg::Message(Response::Notify(resp));
         let server = self.clone();
         task::spawn(async move {
             server.broadcast_internal(msg).await;
