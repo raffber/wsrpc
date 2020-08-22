@@ -202,7 +202,6 @@ impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<
                 Ok(msg) => {
                     match msg {
                         tungstenite::Message::Text(text) => {
-                            log::debug!("Received: {}", text);
                             if let Ok(resp) = serde_json::from_str::<Response<Resp>>(&text) {
                                 if tx.send(resp).is_err() {
                                     break;
@@ -250,7 +249,6 @@ impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<
                 }
             }
         }
-        log::debug!("Stop Send");
     }
 }
 

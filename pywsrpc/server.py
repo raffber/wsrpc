@@ -27,7 +27,7 @@ class Server(object):
         await self._server.wait_closed()
 
     async def broadcast(self, msg):
-        msg = {'Broadcast': msg}
+        msg = {'Notify': msg}
         connected = list(self._connected.keys())
         msg = json.dumps(msg)
         for con in connected:
