@@ -7,12 +7,14 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::net::ToSocketAddrs;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio_tungstenite::accept_async;
-use futures::StreamExt;
 use crate::{Message, Response, Request};
 use log::{info, debug};
 use tokio::task;
 use futures::SinkExt;
 use serde::de::DeserializeOwned;
+use tokio::time::Duration;
+use tokio::time;
+use tokio::stream::StreamExt;
 
 
 #[derive(Clone)]
@@ -120,27 +122,46 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         let (mut write, mut read) = ws_stream.split();
         let server = self.clone();
         task::spawn(async move {
-            // TODO: regular pings to detect drops
-            while let Some(x) = rx_resp.recv().await {
+            enum Merged {
+                Interval,
+                Msg(SenderMsg<Req, Resp>)
+            }
+
+            let interval = time::interval(Duration::from_millis(500)).map(|_| Merged::Interval);
+            let rx = rx_resp.map(Merged::Msg);
+            let mut merged = interval.merge(rx);
+
+            while let Some(x) = merged.next().await {
                 match x {
-                    SenderMsg::Pong(x) => {
-                        if let Err(_) = write.send(tungstenite::Message::Pong(x)).await {
+                    Merged::Interval => {
+                        if let Err(_) = write.send(tungstenite::Message::Ping(vec![1,2,3,4])) {
+                            // TODO: also detect drop if not getting an answer
                             break;
                         }
-                    }
-                    SenderMsg::Drop => break,
-                    SenderMsg::Message(msg) => {
-                        let data = serde_json::to_string(&msg).unwrap();
-                        if let Err(_) = write.send(tungstenite::Message::Text(data)).await {
-                            break;
+                    },
+                    Merged::Msg(x) => {
+                        // TODO: move to own function
+                        match x {
+                            SenderMsg::Pong(x) => {
+                                if let Err(_) = write.send(tungstenite::Message::Pong(x)).await {
+                                    break;
+                                }
+                            }
+                            SenderMsg::Drop => break,
+                            SenderMsg::Message(msg) => {
+                                let data = serde_json::to_string(&msg).unwrap();
+                                if let Err(_) = write.send(tungstenite::Message::Text(data)).await {
+                                    break;
+                                }
+                            }
+                            SenderMsg::Request(msg) => {
+                                let data = serde_json::to_string(&msg).unwrap();
+                                if let Err(_) = write.send(tungstenite::Message::Text(data)).await {
+                                    break;
+                                }
+                            }
                         }
-                    }
-                    SenderMsg::Request(msg) => {
-                        let data = serde_json::to_string(&msg).unwrap();
-                        if let Err(_) = write.send(tungstenite::Message::Text(data)).await {
-                            break;
-                        }
-                    }
+                    },
                 }
             }
             server.remove_client(&id).await;
