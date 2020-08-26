@@ -1,21 +1,23 @@
-use uuid::Uuid;
-
-use tokio::sync::RwLock;
-use std::sync::Arc;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+use futures::SinkExt;
+use futures::stream::SplitSink;
+use log::{debug, info};
+use serde::de::DeserializeOwned;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::net::ToSocketAddrs;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio_tungstenite::accept_async;
-use crate::{Message, Response, Request};
-use log::{info, debug};
-use tokio::task;
-use futures::SinkExt;
-use serde::de::DeserializeOwned;
-use tokio::time::Duration;
-use tokio::time;
 use tokio::stream::StreamExt;
+use tokio::sync::RwLock;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::task;
+use tokio::time;
+use tokio::time::Duration;
+use tokio_tungstenite::accept_async;
+use tokio_tungstenite::WebSocketStream;
+use uuid::Uuid;
 
+use crate::{Message, Request, Response};
 
 #[derive(Clone)]
 enum SenderMsg<Req: Message, Resp: Message> {
@@ -75,9 +77,14 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Request
     pub fn take(self) -> (Req, Reply<Req, Resp>) {
         (self.msg, Reply {
             id: self.id,
-            server: self.server
+            server: self.server,
         })
     }
+}
+
+enum Merged<Req: Message, Resp: Message> {
+    Interval,
+    Msg(SenderMsg<Req, Resp>),
 }
 
 
@@ -88,7 +95,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
             connections: Default::default(),
         };
         Self {
-            inner: Arc::new(RwLock::new(inner))
+            inner: Arc::new(RwLock::new(inner)),
         }
     }
 
@@ -100,7 +107,6 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
 
         let server = self.clone();
         task::spawn(async move {
-            // TODO: allow shutting down listener
             while let Ok((stream, path)) = listener.accept().await {
                 info!("Client connected on: {}", path);
                 let (tx_resp, rx_resp) = unbounded_channel();
@@ -115,58 +121,24 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
     }
 
     async fn run_client(self, id: Uuid, stream: TcpStream,
-                        mut rx_resp: UnboundedReceiver<SenderMsg<Req, Resp>>,
+                        rx_resp: UnboundedReceiver<SenderMsg<Req, Resp>>,
                         tx_resp: UnboundedSender<SenderMsg<Req, Resp>>,
                         tx_req: UnboundedSender<Requested<Req, Resp>>) {
         let ws_stream = accept_async(stream).await.unwrap();
-        let (mut write, mut read) = ws_stream.split();
+        let (mut write, mut read) = futures::StreamExt::split(ws_stream);
         let server = self.clone();
         task::spawn(async move {
-            enum Merged {
-                Interval,
-                Msg(SenderMsg<Req, Resp>)
-            }
-
             let interval = time::interval(Duration::from_millis(500)).map(|_| Merged::Interval);
             let rx = rx_resp.map(Merged::Msg);
             let mut merged = interval.merge(rx);
-
-            while let Some(x) = merged.next().await {
-                match x {
-                    Merged::Interval => {
-                        if let Err(_) = write.send(tungstenite::Message::Ping(vec![1,2,3,4])) {
-                            // TODO: also detect drop if not getting an answer
-                            break;
-                        }
-                    },
-                    Merged::Msg(x) => {
-                        // TODO: move to own function
-                        match x {
-                            SenderMsg::Pong(x) => {
-                                if let Err(_) = write.send(tungstenite::Message::Pong(x)).await {
-                                    break;
-                                }
-                            }
-                            SenderMsg::Drop => break,
-                            SenderMsg::Message(msg) => {
-                                let data = serde_json::to_string(&msg).unwrap();
-                                if let Err(_) = write.send(tungstenite::Message::Text(data)).await {
-                                    break;
-                                }
-                            }
-                            SenderMsg::Request(msg) => {
-                                let data = serde_json::to_string(&msg).unwrap();
-                                if let Err(_) = write.send(tungstenite::Message::Text(data)).await {
-                                    break;
-                                }
-                            }
-                        }
-                    },
+            while let Some(msg) = merged.next().await {
+                if !server.write(&mut write, msg).await {
+                    break;
                 }
             }
             server.remove_client(&id).await;
             let _ = write.close().await;
-            info!("Dropping sender of client: {}", id);
+            debug!("Dropping sender of client: {}", id);
         });
         let server = self.clone();
         task::spawn(async move {
@@ -178,6 +150,41 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
             info!("Dropping receiver of client: {}", id);
             server.remove_client(&id).await;
         });
+    }
+
+    async fn write(&self,
+                   write: &mut SplitSink<WebSocketStream<TcpStream>, tungstenite::Message>,
+                   msg: Merged<Req, Resp>) -> bool {
+        match msg {
+            Merged::Interval => {
+                if let Err(_) = write.send(tungstenite::Message::Ping(vec![1, 2, 3, 4])).await {
+                    return false;
+                }
+            }
+            Merged::Msg(x) => {
+                match x {
+                    SenderMsg::Pong(x) => {
+                        if let Err(_) = write.send(tungstenite::Message::Pong(x)).await {
+                            return false;
+                        }
+                    }
+                    SenderMsg::Drop => return false,
+                    SenderMsg::Message(msg) => {
+                        let data = serde_json::to_string(&msg).unwrap();
+                        if let Err(_) = write.send(tungstenite::Message::Text(data)).await {
+                            return false;
+                        }
+                    }
+                    SenderMsg::Request(msg) => {
+                        let data = serde_json::to_string(&msg).unwrap();
+                        if let Err(_) = write.send(tungstenite::Message::Text(data)).await {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        true
     }
 
     async fn handle_rx(&self, client_id: Uuid,
@@ -261,7 +268,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         }
     }
 
-    pub async fn close_all(&self) {
+    pub async fn shutdown(&self) {
         info!("Closing all client connections.");
         let mut write = self.inner.write().await;
         for (_id, con) in &write.connections {
