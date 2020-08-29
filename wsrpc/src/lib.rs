@@ -3,6 +3,7 @@
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
+mod http;
 pub mod client;
 pub mod server;
 

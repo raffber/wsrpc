@@ -8,8 +8,8 @@ use serde::de::DeserializeOwned;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::net::ToSocketAddrs;
 use tokio::stream::StreamExt;
-use tokio::sync::RwLock;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::RwLock;
 use tokio::task;
 use tokio::time;
 use tokio::time::Duration;
@@ -18,6 +18,8 @@ use tokio_tungstenite::WebSocketStream;
 use uuid::Uuid;
 
 use crate::{Message, Request, Response};
+use crate::http::HttpServer;
+use std::net::SocketAddr;
 
 #[derive(Clone)]
 enum SenderMsg<Req: Message, Resp: Message> {
@@ -99,11 +101,13 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         }
     }
 
-    pub async fn listen<A: ToSocketAddrs>(&self, addr: A) -> UnboundedReceiver<Requested<Req, Resp>>
+    pub async fn listen<A: ToSocketAddrs>(&self, addr: A, http_addr: SocketAddr) -> UnboundedReceiver<Requested<Req, Resp>>
     {
         info!("WsRpc Server Listening");
         let mut listener = TcpListener::bind(addr).await.expect("Failed to bind");
         let (tx_req, rx_req) = unbounded_channel();
+
+        let todo = HttpServer::spawn(http_addr, self.clone(), tx_req.clone());
 
         let server = self.clone();
         task::spawn(async move {
@@ -196,7 +200,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
             Ok(msg) => {
                 match msg {
                     tungstenite::Message::Text(text) => {
-                        debug!("Message received from client{}: `{}`", client_id, text);
+                        debug!("Message received: `{}`", text);
                         match serde_json::from_str::<Request<Req>>(&text) {
                             Ok(msg) => {
                                 // we drop in case the receiver of the requests drops

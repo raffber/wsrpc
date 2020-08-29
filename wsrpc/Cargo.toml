@@ -14,6 +14,7 @@ uuid = { version = "0.8", features = ["serde", "v4"] }
 url = "2.1.1"
 env_logger = "0.7.1"
 thiserror = "1.0.20"
+hyper = "0.13.7"
 
 [dependencies.serde]
 features = ["derive"]
