@@ -16,13 +16,14 @@ use tokio::time::Duration;
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::WebSocketStream;
 use uuid::Uuid;
+use tokio::sync::oneshot;
 
 use crate::{Message, Request, Response};
 use crate::http::HttpServer;
 use std::net::SocketAddr;
 
 #[derive(Clone)]
-enum SenderMsg<Req: Message, Resp: Message> {
+pub(crate) enum SenderMsg<Req: Message, Resp: Message> {
     Drop,
     Pong(Vec<u8>),
     Message(Response<Resp>),
@@ -39,14 +40,18 @@ pub struct Server<Req: Message, Resp: Message> {
 }
 
 pub struct Reply<Req: Message, Resp: Message> {
-    id: Uuid,
-    server: Server<Req, Resp>,
+    pub(crate) id: Uuid,
+    pub(crate) server: Server<Req, Resp>,
+    pub(crate) direct: Option<oneshot::Sender<Resp>>,
 }
 
 impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Reply<Req, Resp> {
-    pub fn answer(self, resp: Resp) {
+    pub fn answer(mut self, resp: Resp) {
+        if let Some(direct) = self.direct.take() {
+            let _ = direct.send(resp.clone());
+        }
         let resp = Response::Reply {
-            request: self.id,
+            request: self.id.clone(),
             message: resp,
         };
         task::spawn(async move {
@@ -56,31 +61,21 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Reply<R
 }
 
 pub struct Requested<Req: Message, Resp: Message> {
-    msg: Req,
-    id: Uuid,
-    server: Server<Req, Resp>,
+    pub(crate) msg: Req,
+    pub(crate) reply: Reply<Req, Resp>
 }
 
 impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Requested<Req, Resp> {
     pub fn answer(self, resp: Resp) {
-        let resp = Response::Reply {
-            request: self.id,
-            message: resp,
-        };
-        task::spawn(async move {
-            self.server.broadcast_internal(SenderMsg::Message(resp)).await;
-        });
+        self.reply.answer(resp);
     }
 
     pub fn msg(&self) -> &Req {
         &self.msg
     }
 
-    pub fn take(self) -> (Req, Reply<Req, Resp>) {
-        (self.msg, Reply {
-            id: self.id,
-            server: self.server,
-        })
+    pub fn split(self) -> (Req, Reply<Req, Resp>) {
+        (self.msg, self.reply)
     }
 }
 
@@ -107,7 +102,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         let mut listener = TcpListener::bind(addr).await.expect("Failed to bind");
         let (tx_req, rx_req) = unbounded_channel();
 
-        let todo = HttpServer::spawn(http_addr, self.clone(), tx_req.clone());
+        HttpServer::spawn(http_addr, self.clone(), tx_req.clone());
 
         let server = self.clone();
         task::spawn(async move {
@@ -229,8 +224,11 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         server.broadcast_internal(SenderMsg::Request(req)).await;
         tx_req.send(Requested {
             msg: msg.message,
-            id,
-            server,
+            reply: Reply {
+                id,
+                server,
+                direct: None
+            }
         }).is_ok()
     }
 
@@ -257,7 +255,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         });
     }
 
-    async fn broadcast_internal(&self, resp: SenderMsg<Req, Resp>) {
+    pub(crate) async fn broadcast_internal(&self, resp: SenderMsg<Req, Resp>) {
         let mut to_remove = HashSet::new();
         {
             let read = self.inner.read().await;
