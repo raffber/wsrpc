@@ -1,26 +1,26 @@
-use crate::{Message, Request, Response};
-use tokio_tungstenite::{connect_async, WebSocketStream};
-use std::time::{Instant, Duration};
-use tokio::time::delay_for;
 use std::io;
-use tokio::io::ErrorKind;
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel, UnboundedReceiver};
-use tokio::sync::broadcast::{Sender as BcSender, Receiver as BcReceiver, channel as bc_channel};
-use tokio::task;
-use tokio::net::TcpStream;
-use futures::stream::{SplitStream, SplitSink};
+use std::time::{Duration, Instant};
+
 use futures::{SinkExt, StreamExt};
+use futures::stream::{SplitSink, SplitStream};
 use serde::de::DeserializeOwned;
-use uuid::Uuid;
 use thiserror::Error;
+use tokio::io::ErrorKind;
+use tokio::net::TcpStream;
+use tokio::sync::broadcast::{channel as bc_channel, Receiver as BcReceiver, Sender as BcSender};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::task;
+use tokio::time::delay_for;
 use tokio::time::timeout;
+use tokio_tungstenite::{connect_async, WebSocketStream};
 use url::Url;
+use uuid::Uuid;
+
+use crate::{Message, Request, Response};
 
 type WsStream = WebSocketStream<TcpStream>;
 
 const BC_CHANNEL_SIZE: usize = 1000;
-
-pub type LogLevel = i32;
 
 pub type Monitor<Resp> = BcReceiver<Response<Resp>>;
 

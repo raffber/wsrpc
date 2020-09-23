@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 mod http;
@@ -24,6 +24,6 @@ pub enum Response<M: Message> {
         message: M,
     },
     Notify(M),
-    Error(String)
+    Error(String),
 }
 

@@ -5,16 +5,16 @@ use std::string::FromUtf8Error;
 use hyper::{Body, Request as HyperRequest, Response as HyperResponse};
 use hyper::Server as HyperServer;
 use hyper::service::{make_service_fn, service_fn};
+use serde::de::DeserializeOwned;
 use serde_json::json;
 use tokio::stream::StreamExt;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::task;
-
-use uuid::Uuid;
-use crate::{Message, Request};
-use crate::server::{Requested, Server, SenderMsg};
-use serde::de::DeserializeOwned;
 use tokio::sync::oneshot;
+use tokio::task;
+use uuid::Uuid;
+
+use crate::{Message, Request};
+use crate::server::{Requested, SenderMsg, Server};
 use crate::server::Reply;
 
 #[derive(Clone)]
@@ -79,12 +79,12 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
             reply: Reply {
                 id: uuid,
                 server: self.server.clone(),
-                direct: Some(tx)
-            }
+                direct: Some(tx),
+            },
         };
         let broadcast = Request {
             id: uuid,
-            message: request
+            message: request,
         };
 
         self.server.broadcast_internal(SenderMsg::Request(broadcast)).await;

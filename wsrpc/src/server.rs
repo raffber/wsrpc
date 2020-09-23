@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use futures::SinkExt;
@@ -9,6 +10,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::net::ToSocketAddrs;
 use tokio::stream::StreamExt;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::oneshot;
 use tokio::sync::RwLock;
 use tokio::task;
 use tokio::time;
@@ -16,11 +18,9 @@ use tokio::time::Duration;
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::WebSocketStream;
 use uuid::Uuid;
-use tokio::sync::oneshot;
 
 use crate::{Message, Request, Response};
 use crate::http::HttpServer;
-use std::net::SocketAddr;
 
 #[derive(Clone)]
 pub(crate) enum SenderMsg<Req: Message, Resp: Message> {
@@ -62,7 +62,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Reply<R
 
 pub struct Requested<Req: Message, Resp: Message> {
     pub(crate) msg: Req,
-    pub(crate) reply: Reply<Req, Resp>
+    pub(crate) reply: Reply<Req, Resp>,
 }
 
 impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Requested<Req, Resp> {
@@ -227,8 +227,8 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
             reply: Reply {
                 id,
                 server,
-                direct: None
-            }
+                direct: None,
+            },
         }).is_ok()
     }
 
