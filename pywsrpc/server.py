@@ -22,8 +22,8 @@ class Server(object):
         self._server = None
         self._handler = handler
 
-    async def run(self):
-        self._server = await serve(self._connection_handler, "127.0.0.1", 8765)
+    async def run(self, socketaddr: str, port: int):
+        self._server = await serve(self._connection_handler, socketaddr, port)
         await self._server.wait_closed()
 
     async def broadcast(self, msg):
