@@ -1,13 +1,17 @@
-import json
-from asyncio import Queue
 import asyncio
+import json
 from uuid import UUID
 
 import msgpack
-from jsonschema import validate, ValidationError
 from websockets import serve, ConnectionClosed
 
-from poke.server import Quit
+
+class Quit(Exception):
+    """
+    Exception to quit the server task
+    """
+    pass
+
 
 REQUEST_SCHEMA = {
     "type": "object",
@@ -17,16 +21,30 @@ REQUEST_SCHEMA = {
 
 
 class Server(object):
+    """
+    Async websocket RPC server implementation.
+
+    The server must be given a message handler, which is called for
+    each incoming message. The handler may return a message, in which
+    case the message is sent back onto the "bus".
+    """
     def __init__(self, handler):
         self._connected = {}
         self._server = None
         self._handler = handler
 
     async def run(self, socketaddr: str, port: int):
+        """
+        Creates a websocket server on the given address, listening on the given port.
+        This function will only return, once the server has terminated.
+        """
         self._server = await serve(self._connection_handler, socketaddr, port)
         await self._server.wait_closed()
 
     async def broadcast(self, msg):
+        """
+        Broadcast a message to all clients
+        """
         msg = {'Notify': msg}
         connected = list(self._connected.keys())
         msg = json.dumps(msg)
@@ -34,6 +52,9 @@ class Server(object):
             await con.send(msg)
 
     async def answer(self, id, msg):
+        """
+        Answer a previous request.
+        """
         msg = {'Reply': {'request': id, 'message': msg}}
         connected = list(self._connected.keys())
         msg = json.dumps(msg)
@@ -41,6 +62,9 @@ class Server(object):
             await con.send(msg)
 
     async def send_error(self, msg):
+        """
+        Send an error message
+        """
         msg = {"Error": msg}
         connected = list(self._connected.keys())
         msg = json.dumps(msg)
@@ -57,6 +81,9 @@ class Server(object):
         del self._connected[client]
 
     async def shutdown(self):
+        """
+        Close all connections and shut down the server
+        """
         for connection, task in self._connected.items():
             await connection.close()
             # task.cancel()
@@ -68,14 +95,25 @@ class Server(object):
 
 
 class Connection(object):
+    """
+    Handles a client connection
+    """
     def __init__(self, server: Server, ws):
         self._server = server
         self._ws = ws
 
     async def close(self):
+        """
+        Close this connection
+        """
         await self._ws.close()
 
     async def run(self):
+        """
+        Run this connection. This coroutine
+        will run until this connection has been
+        closed.
+        """
         try:
             while True:
                 await self._loop()
@@ -87,9 +125,13 @@ class Connection(object):
             self._server.unregister_client(self)
 
     async def send(self, msg):
+        """
+        Send a message to this connection
+        """
         await self._ws.send(msg)
 
     async def _loop(self):
+        # handles one incoming message
         msg = await self._ws.recv()
         try:
             if isinstance(msg, str):
@@ -111,6 +153,7 @@ class Connection(object):
         except ValueError:
             await self._server.send_error("Invalid UUID")
             return
+        # call back into the application
         reply = self._server.handler(msg['message'])
         if reply is not None:
             await self._server.answer(id, reply)

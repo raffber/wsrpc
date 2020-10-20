@@ -9,11 +9,20 @@ from websockets import connect
 
 
 class Client(object):
+    """
+    A async implementation of a websocket RPC client.
+    Incoming messages are send to a `asyncio.Queue`, which is accessible
+    over `Client.queue`.
+    """
     def __init__(self):
         self._queue = Queue()
         self._ws = None
 
     async def connect(self, url):
+        """
+        Connect to a remote server.
+        Spawns a new task handling incoming messages.
+        """
         if self._ws is not None:
             raise ValueError('Already started')
         self._ws = await connect(url)
@@ -33,11 +42,18 @@ class Client(object):
         self._ws = None
 
     async def send_request(self, msg) -> str:
+        """
+        Send a request, returning the request id.
+        """
         id = str(uuid4())
         await self._ws.send(json.dumps({'id': id, 'message': msg}))
         return id
 
     async def query(self, msg, timeout=1.0):
+        """
+        Send a request and wait for the answer.
+        Returns None if no answer was received during the timeout.
+        """
         id = await self.send_request(msg)
         start = datetime.now()
         while True:
@@ -53,4 +69,7 @@ class Client(object):
 
     @property
     def queue(self):
+        """
+        Provides access to the internal queue of incoming messages.
+        """
         return self._queue
