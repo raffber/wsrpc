@@ -88,6 +88,24 @@ pub struct LoopbackClient<Req: Message, Resp: Message> {
     tx: UnboundedSender<Request<Req>>
 }
 
+impl<Req: Message, Resp: Message> LoopbackClient<Req, Resp> {
+    pub fn sender(&self) -> UnboundedSender<Request<Req>> {
+        self.tx.clone()
+    }
+
+    pub fn receiver(self) -> UnboundedReceiver<Response<Req, Resp>> {
+        self.rx
+    }
+
+    pub fn split(self) -> (UnboundedSender<Request<Req>>, UnboundedReceiver<Response<Req, Resp>>) {
+        (self.tx, self.rx)
+    }
+
+    pub async fn next(&mut self) -> Option<Response<Req, Resp>> {
+        self.rx.recv().await
+    }
+}
+
 impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<Req, Resp> {
     pub fn new() -> Self
     {
