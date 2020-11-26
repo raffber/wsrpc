@@ -95,10 +95,11 @@ class Client(object):
         id = str(uuid4())
 
         def flt(msg):
-            return 'Reply' in msg and msg['Reply']['request'] == id
+            ret = 'Reply' in msg and msg['Reply']['request'] == id
+            return ret
 
         rx = self.listen(flt)
-        await self.send_request(msg)
+        await self.send_request(msg, id=id)
         try:
             return await asyncio.wait_for(rx.next(), timeout)
         except TimeoutError:
