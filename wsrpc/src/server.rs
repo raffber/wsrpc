@@ -26,8 +26,7 @@ use crate::http::HttpServer;
 pub(crate) enum SenderMsg<Req: Message, Resp: Message> {
     Drop,
     Pong(Vec<u8>),
-    Message(Response<Resp>),
-    Request(Request<Req>),
+    Message(Response<Req, Resp>),
 }
 
 struct ServerShared<Req: Message, Resp: Message> {
@@ -174,12 +173,6 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                             return false;
                         }
                     }
-                    SenderMsg::Request(msg) => {
-                        let data = serde_json::to_string(&msg).unwrap();
-                        if let Err(_) = write.send(tungstenite::Message::Text(data)).await {
-                            return false;
-                        }
-                    }
                 }
             }
         }
@@ -219,9 +212,12 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
 
     async fn handle_valid_msg(&self, msg: Request<Req>, tx_req: UnboundedSender<Requested<Req, Resp>>) -> bool {
         let server = self.clone();
-        let req = msg.clone();
         let id = msg.id;
-        server.broadcast_internal(SenderMsg::Request(req)).await;
+        let broadcast = Response::Request {
+            id: msg.id,
+            message: msg.message.clone()
+        };
+        server.broadcast_internal(SenderMsg::Message(broadcast)).await;
         tx_req.send(Requested {
             msg: msg.message,
             reply: Reply {
@@ -238,7 +234,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         self.send(client_id, msg).await;
     }
 
-    async fn send(&self, id: &Uuid, msg: Response<Resp>) {
+    async fn send(&self, id: &Uuid, msg: Response<Req, Resp>) {
         let mut write = self.inner.write().await;
         if let Some(con) = write.connections.get(id) {
             if let Err(_) = con.send(SenderMsg::Message(msg)) {
