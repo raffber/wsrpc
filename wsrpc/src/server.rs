@@ -83,6 +83,10 @@ enum Merged<Req: Message, Resp: Message> {
     Msg(SenderMsg<Req, Resp>),
 }
 
+pub struct LoopbackClient<Req: Message, Resp: Message> {
+    rx: UnboundedReceiver<Response<Req, Resp>>,
+    tx: UnboundedSender<Request<Req>>
+}
 
 impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<Req, Resp> {
     pub fn new() -> Self
@@ -116,6 +120,45 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         });
 
         rx_req
+    }
+
+    pub async fn loopback(&self) -> (UnboundedReceiver<Requested<Req, Resp>>, LoopbackClient<Req, Resp>) {
+        let (server_tx, server_rx) = unbounded_channel();
+        let (client_tx, mut client_rx) = unbounded_channel::<Request<Req>>();
+        let (sender_tx, mut sender_rx) = unbounded_channel();
+        let (network_tx, network_rx) = unbounded_channel();
+
+        {
+            let mut write = self.inner.write().await;
+            write.connections.insert(Uuid::new_v4(), sender_tx);
+        }
+
+        let server = self.clone();
+        task::spawn( async move {
+            while let Some(msg) = client_rx.recv().await {
+                server.handle_valid_msg(msg, server_tx.clone()).await;
+            }
+        });
+
+        task::spawn(async move {
+            while let Some(msg) = sender_rx.recv().await {
+                match msg {
+                    SenderMsg::Drop => break,
+                    SenderMsg::Message(msg) => {
+                        if network_tx.send(msg).is_err() {
+                            break;
+                        }
+                    },
+                    _ => {}
+                }
+            }
+        });
+
+        let client = LoopbackClient {
+            rx: network_rx,
+            tx: client_tx
+        };
+        (server_rx, client)
     }
 
     async fn run_client(self, id: Uuid, stream: TcpStream,
