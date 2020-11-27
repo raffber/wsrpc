@@ -1,7 +1,6 @@
 import asyncio
 import json
 from asyncio import Queue, QueueFull
-from datetime import datetime
 from uuid import uuid4
 
 import msgpack
@@ -51,6 +50,10 @@ class Client(object):
         self._ws = await connect(url)
         asyncio.create_task(self._rx_loop())
 
+    @property
+    def connected(self):
+        return self._ws is not None
+
     async def _rx_loop(self):
         while True:
             msg = await self._ws.recv()
@@ -61,16 +64,17 @@ class Client(object):
                     msg = json.loads(msg)
                 for (flt, receiver) in self._receivers.values():
                     assert isinstance(receiver, Receiver)
-                    if flt is None or flt(msg):
+                    mapped = flt(msg)
+                    if mapped is not None:
                         try:
-                            receiver.queue.put_nowait(msg)
+                            receiver.queue.put_nowait(mapped)
                         except QueueFull:
                             pass
             except:
                 continue
         self._ws = None
 
-    def listen(self, flt=None) -> Receiver:
+    def listen(self, flt=lambda msg: msg) -> Receiver:
         rx = Receiver(self)
         self._receivers[id(rx)] = (flt, rx)
         return rx
