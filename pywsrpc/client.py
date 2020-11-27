@@ -28,6 +28,16 @@ class Receiver(object):
     def disconnect(self):
         self._client.unregister(self)
 
+    def get_all(self):
+        ret = []
+        while True:
+            try:
+                rx = self._queue.get_nowait()
+                ret.append(rx)
+            except:
+                break
+        return ret
+
 
 class Client(object):
     """
@@ -100,7 +110,9 @@ class Client(object):
 
         def flt(msg):
             ret = 'Reply' in msg and msg['Reply']['request'] == id
-            return ret
+            if ret:
+                return msg['Reply']['message']
+            return None
 
         rx = self.listen(flt)
         await self.send_request(msg, id=id)
