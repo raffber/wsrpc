@@ -36,6 +36,7 @@ struct ServerShared<Req: Message, Resp: Message> {
 #[derive(Clone)]
 pub struct Server<Req: Message, Resp: Message> {
     inner: Arc<RwLock<ServerShared<Req, Resp>>>,
+    tx_req: UnboundedSender<Requested<Req, Resp>>,
 }
 
 pub struct Reply<Req: Message, Resp: Message> {
@@ -85,7 +86,7 @@ enum Merged<Req: Message, Resp: Message> {
 
 pub struct LoopbackClient<Req: Message, Resp: Message> {
     rx: UnboundedReceiver<Response<Req, Resp>>,
-    tx: UnboundedSender<Request<Req>>
+    tx: UnboundedSender<Request<Req>>,
 }
 
 impl<Req: Message, Resp: Message> LoopbackClient<Req, Resp> {
@@ -107,23 +108,25 @@ impl<Req: Message, Resp: Message> LoopbackClient<Req, Resp> {
 }
 
 impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<Req, Resp> {
-    pub fn new() -> Self
+    pub fn new() -> (Self, UnboundedReceiver<Requested<Req, Resp>>)
     {
+        let (tx_req, rx_req) = unbounded_channel();
         let inner = ServerShared {
-            connections: Default::default(),
+            connections: Default::default()
         };
-        Self {
+        let server = Self {
             inner: Arc::new(RwLock::new(inner)),
-        }
+            tx_req,
+        };
+        (server, rx_req)
     }
 
-    pub async fn listen<A: ToSocketAddrs>(&self, addr: A, http_addr: SocketAddr) -> UnboundedReceiver<Requested<Req, Resp>>
+    pub async fn listen<A: ToSocketAddrs>(&self, addr: A, http_addr: SocketAddr)
     {
         info!("WsRpc Server Listening");
         let mut listener = TcpListener::bind(addr).await.expect("Failed to bind");
-        let (tx_req, rx_req) = unbounded_channel();
 
-        HttpServer::spawn(http_addr, self.clone(), tx_req.clone());
+        HttpServer::spawn(http_addr, self.clone(), self.tx_req.clone());
 
         let server = self.clone();
         task::spawn(async move {
@@ -133,15 +136,12 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                 let id = Uuid::new_v4();
                 let mut write = server.inner.write().await;
                 write.connections.insert(id, tx_resp.clone());
-                server.clone().run_client(id, stream, rx_resp, tx_resp, tx_req.clone()).await;
+                server.clone().run_client(id, stream, rx_resp, tx_resp).await;
             }
         });
-
-        rx_req
     }
 
-    pub async fn loopback(&self) -> (UnboundedReceiver<Requested<Req, Resp>>, LoopbackClient<Req, Resp>) {
-        let (server_tx, server_rx) = unbounded_channel();
+    pub async fn loopback(&self) -> LoopbackClient<Req, Resp> {
         let (client_tx, mut client_rx) = unbounded_channel::<Request<Req>>();
         let (sender_tx, mut sender_rx) = unbounded_channel();
         let (network_tx, network_rx) = unbounded_channel();
@@ -152,9 +152,9 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         }
 
         let server = self.clone();
-        task::spawn( async move {
+        task::spawn(async move {
             while let Some(msg) = client_rx.recv().await {
-                server.handle_valid_msg(msg, server_tx.clone()).await;
+                server.handle_valid_msg(msg).await;
             }
         });
 
@@ -166,7 +166,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                         if network_tx.send(msg).is_err() {
                             break;
                         }
-                    },
+                    }
                     _ => {}
                 }
             }
@@ -174,15 +174,14 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
 
         let client = LoopbackClient {
             rx: network_rx,
-            tx: client_tx
+            tx: client_tx,
         };
-        (server_rx, client)
+        client
     }
 
     async fn run_client(self, id: Uuid, stream: TcpStream,
                         rx_resp: UnboundedReceiver<SenderMsg<Req, Resp>>,
-                        tx_resp: UnboundedSender<SenderMsg<Req, Resp>>,
-                        tx_req: UnboundedSender<Requested<Req, Resp>>) {
+                        tx_resp: UnboundedSender<SenderMsg<Req, Resp>>) {
         let ws_stream = accept_async(stream).await.unwrap();
         let (mut write, mut read) = futures::StreamExt::split(ws_stream);
         let server = self.clone();
@@ -202,7 +201,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         let server = self.clone();
         task::spawn(async move {
             while let Some(msg) = read.next().await {
-                if !server.handle_rx(id, msg, &tx_resp, &tx_req.clone()).await {
+                if !server.handle_rx(id, msg, &tx_resp).await {
                     break;
                 }
             }
@@ -242,9 +241,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
 
     async fn handle_rx(&self, client_id: Uuid,
                        msg: Result<tungstenite::Message, tungstenite::Error>,
-                       tx_resp: &UnboundedSender<SenderMsg<Req, Resp>>,
-                       tx_req: &UnboundedSender<Requested<Req, Resp>>,
-    ) -> bool {
+                       tx_resp: &UnboundedSender<SenderMsg<Req, Resp>>) -> bool {
         match msg {
             Ok(msg) => {
                 match msg {
@@ -253,7 +250,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                         match serde_json::from_str::<Request<Req>>(&text) {
                             Ok(msg) => {
                                 // we drop in case the receiver of the requests drops
-                                self.handle_valid_msg(msg, tx_req.clone()).await
+                                self.handle_valid_msg(msg).await
                             }
                             Err(err) => {
                                 self.handle_invalid_msg(&client_id, err).await;
@@ -271,15 +268,15 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         }
     }
 
-    async fn handle_valid_msg(&self, msg: Request<Req>, tx_req: UnboundedSender<Requested<Req, Resp>>) -> bool {
+    async fn handle_valid_msg(&self, msg: Request<Req>) -> bool {
         let server = self.clone();
         let id = msg.id;
         let broadcast = Response::Request {
             id: msg.id,
-            message: msg.message.clone()
+            message: msg.message.clone(),
         };
         server.broadcast_internal(SenderMsg::Message(broadcast)).await;
-        tx_req.send(Requested {
+        self.tx_req.send(Requested {
             msg: msg.message,
             reply: Reply {
                 id,
