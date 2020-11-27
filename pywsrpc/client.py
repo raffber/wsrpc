@@ -33,10 +33,14 @@ class Receiver(object):
         while True:
             try:
                 rx = self._queue.get_nowait()
+                self._queue.task_done()
                 ret.append(rx)
             except:
                 break
         return ret
+
+    def clear_all(self):
+        self.get_all()
 
 
 class Client(object):
@@ -56,7 +60,7 @@ class Client(object):
         Spawns a new task handling incoming messages.
         """
         if self._ws is not None:
-            raise ValueError('Already started')
+            return
         self._ws = await connect(url)
         asyncio.create_task(self._rx_loop())
 
@@ -121,3 +125,6 @@ class Client(object):
         except TimeoutError:
             pass
         return None
+
+    async def disconnect(self):
+        await self._ws.close()
