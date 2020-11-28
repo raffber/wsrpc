@@ -9,10 +9,15 @@ from websockets import connect
 RX_QUEUE_SIZE = 1000
 
 
+class ReceiverDisconnected(Exception):
+    pass
+
+
 class Receiver(object):
     def __init__(self, client):
         self._queue = Queue(RX_QUEUE_SIZE)
         self._client = client
+        self._connected = True
 
     @property
     def client(self):
@@ -26,7 +31,19 @@ class Receiver(object):
         return await self._queue.get()
 
     def disconnect(self):
-        self._client.unregister(self)
+        try:
+            self._client._unregister(self)
+        except ReceiverDisconnected:
+            pass
+        self._connected = False
+
+    def __enter__(self):
+        if not self._connected:
+            raise ReceiverDisconnected()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.disconnect()
 
     def get_all(self):
         ret = []
@@ -63,7 +80,7 @@ class Client(object):
             return
         self._ws = await connect(url)
         asyncio.create_task(self._rx_loop())
-        return self 
+        return self
 
     @property
     def connected(self):
@@ -94,7 +111,10 @@ class Client(object):
         self._receivers[id(rx)] = (flt, rx)
         return rx
 
-    def unregister(self, rx: Receiver):
+    def _unregister(self, rx: Receiver):
+        key = id(rx)
+        if key not in self._receivers:
+            raise ReceiverDisconnected
         del self._receivers[id(rx)]
 
     async def send_request(self, msg, id=None) -> str:
