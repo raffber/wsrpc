@@ -63,6 +63,7 @@ class Client(object):
             return
         self._ws = await connect(url)
         asyncio.create_task(self._rx_loop())
+        return self 
 
     @property
     def connected(self):
