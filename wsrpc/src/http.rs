@@ -13,7 +13,7 @@ use tokio::sync::oneshot;
 use tokio::task;
 use uuid::Uuid;
 
-use crate::{Message, Request};
+use crate::{Message, Response};
 use crate::server::{Requested, SenderMsg, Server};
 use crate::server::Reply;
 
@@ -82,12 +82,12 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
                 direct: Some(tx),
             },
         };
-        let broadcast = Request {
+        let broadcast = Response::Request {
             id: uuid,
-            message: request,
+            message: request
         };
 
-        self.server.broadcast_internal(SenderMsg::Request(broadcast)).await;
+        self.server.broadcast_internal(SenderMsg::Message(broadcast)).await;
 
         // TODO: shutdown server in case this channel breaks
         let _ = self.tx.send(req);

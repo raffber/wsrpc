@@ -22,7 +22,7 @@ type WsStream = WebSocketStream<TcpStream>;
 
 const BC_CHANNEL_SIZE: usize = 1000;
 
-pub type Monitor<Resp> = BcReceiver<Response<Resp>>;
+pub type Monitor<Req, Resp> = BcReceiver<Response<Req, Resp>>;
 
 #[derive(Error, Debug)]
 pub enum ClientError {
@@ -46,10 +46,10 @@ enum SenderMsg<Req: Message> {
 #[derive(Clone)]
 pub struct Client<Req: Message, Resp: Message> {
     tx: UnboundedSender<SenderMsg<Req>>,
-    tx_bc: BcSender<Response<Resp>>,
+    tx_bc: BcSender<Response<Req, Resp>>,
 }
 
-impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<Req, Resp> {
+impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + DeserializeOwned> Client<Req, Resp> {
     pub async fn connect<A>(url: A, duration: Duration) -> io::Result<Self>
         where
             A: Into<Url>
@@ -96,7 +96,7 @@ impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<
         ret
     }
 
-    pub fn monitor(&self) -> Monitor<Resp> {
+    pub fn monitor(&self) -> Monitor<Req, Resp> {
         self.tx_bc.subscribe()
     }
 
@@ -196,13 +196,13 @@ impl<Req: 'static + Message, Resp: 'static + Message + DeserializeOwned> Client<
         }
     }
 
-    async fn receiver(self, mut read: SplitStream<WsStream>, tx: BcSender<Response<Resp>>) {
+    async fn receiver(self, mut read: SplitStream<WsStream>, tx: BcSender<Response<Req, Resp>>) {
         while let Some(msg) = read.next().await {
             match msg {
                 Ok(msg) => {
                     match msg {
                         tungstenite::Message::Text(text) => {
-                            if let Ok(resp) = serde_json::from_str::<Response<Resp>>(&text) {
+                            if let Ok(resp) = serde_json::from_str::<Response<Req, Resp>>(&text) {
                                 if tx.send(resp).is_err() {
                                     break;
                                 }

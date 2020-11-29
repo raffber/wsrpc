@@ -18,12 +18,16 @@ pub struct Request<M: Message> {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub enum Response<M: Message> {
+pub enum Response<Req: Message, Resp: Message> {
     Reply {
         request: Uuid,
-        message: M,
+        message: Resp,
     },
-    Notify(M),
+    Notify(Resp),
     Error(String),
+    Request {
+        id: Uuid,
+        message: Req,
+    },
 }
 
