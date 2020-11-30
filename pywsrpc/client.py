@@ -28,7 +28,10 @@ class Receiver(object):
         return self._queue
 
     async def next(self):
-        return await self._queue.get()
+        msg = await self._queue.get()
+        if isinstance(msg, Exception):
+            raise msg
+        return msg
 
     def disconnect(self):
         try:
@@ -94,7 +97,10 @@ class Client(object):
                     msg = msgpack.unpackb(msg)
                 else:
                     msg = json.loads(msg)
-                for (flt, receiver) in self._receivers.values():
+            except:
+                continue
+            for (flt, receiver) in self._receivers.values():
+                try:
                     assert isinstance(receiver, Receiver)
                     mapped = flt(msg)
                     if mapped is not None:
@@ -102,8 +108,12 @@ class Client(object):
                             receiver.queue.put_nowait(mapped)
                         except QueueFull:
                             pass
-            except:
-                continue
+                except Exception as e:
+                    try:
+                        receiver.queue.put_nowait(e)
+                    except QueueFull:
+                        pass
+                    continue
         self._ws = None
 
     def listen(self, flt=lambda msg: msg) -> Receiver:
