@@ -27,8 +27,11 @@ class Receiver(object):
     def queue(self) -> Queue:
         return self._queue
 
-    async def next(self):
-        msg = await self._queue.get()
+    async def next(self, timeout=None):
+        if timeout is None:
+            msg = await self._queue.get()
+        else:
+            msg = await asyncio.wait_for(self._queue.get(), timeout)
         if isinstance(msg, Exception):
             raise msg
         return msg
