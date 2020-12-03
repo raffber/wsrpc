@@ -17,6 +17,15 @@ pub struct Request<M: Message> {
     message: M,
 }
 
+impl<M: Message> Request<M> {
+    pub fn new(msg: M) -> Self {
+        Request {
+            id: Uuid::new_v4(),
+            message: msg
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub enum Response<Req: Message, Resp: Message> {
     Reply {
