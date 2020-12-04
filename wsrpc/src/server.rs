@@ -2,12 +2,12 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use futures::SinkExt;
 use futures::stream::SplitSink;
+use futures::SinkExt;
 use log::{debug, info};
 use serde::de::DeserializeOwned;
-use tokio::net::{TcpListener, TcpStream};
 use tokio::net::ToSocketAddrs;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::stream::StreamExt;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
@@ -19,8 +19,8 @@ use tokio_tungstenite::accept_async;
 use tokio_tungstenite::WebSocketStream;
 use uuid::Uuid;
 
-use crate::{Message, Request, Response};
 use crate::http::HttpServer;
+use crate::{Message, Request, Response};
 
 #[derive(Clone)]
 pub(crate) enum SenderMsg<Req: Message, Resp: Message> {
@@ -55,7 +55,9 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Reply<R
             message: resp,
         };
         task::spawn(async move {
-            self.server.broadcast_internal(SenderMsg::Message(resp)).await;
+            self.server
+                .broadcast_internal(SenderMsg::Message(resp))
+                .await;
         });
     }
 }
@@ -98,7 +100,12 @@ impl<Req: Message, Resp: Message> LoopbackClient<Req, Resp> {
         self.rx
     }
 
-    pub fn split(self) -> (UnboundedSender<Request<Req>>, UnboundedReceiver<Response<Req, Resp>>) {
+    pub fn split(
+        self,
+    ) -> (
+        UnboundedSender<Request<Req>>,
+        UnboundedReceiver<Response<Req, Resp>>,
+    ) {
         (self.tx, self.rx)
     }
 
@@ -108,11 +115,10 @@ impl<Req: Message, Resp: Message> LoopbackClient<Req, Resp> {
 }
 
 impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<Req, Resp> {
-    pub fn new() -> (Self, UnboundedReceiver<Requested<Req, Resp>>)
-    {
+    pub fn new() -> (Self, UnboundedReceiver<Requested<Req, Resp>>) {
         let (tx_req, rx_req) = unbounded_channel();
         let inner = ServerShared {
-            connections: Default::default()
+            connections: Default::default(),
         };
         let server = Self {
             inner: Arc::new(RwLock::new(inner)),
@@ -121,8 +127,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         (server, rx_req)
     }
 
-    pub async fn listen<A: ToSocketAddrs>(&self, addr: A, http_addr: SocketAddr)
-    {
+    pub async fn listen<A: ToSocketAddrs>(&self, addr: A, http_addr: SocketAddr) {
         info!("WsRpc Server Listening");
         let mut listener = TcpListener::bind(addr).await.expect("Failed to bind");
 
@@ -136,7 +141,10 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                 let id = Uuid::new_v4();
                 let mut write = server.inner.write().await;
                 write.connections.insert(id, tx_resp.clone());
-                server.clone().run_client(id, stream, rx_resp, tx_resp).await;
+                server
+                    .clone()
+                    .run_client(id, stream, rx_resp, tx_resp)
+                    .await;
             }
         });
     }
@@ -179,9 +187,13 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         client
     }
 
-    async fn run_client(self, id: Uuid, stream: TcpStream,
-                        rx_resp: UnboundedReceiver<SenderMsg<Req, Resp>>,
-                        tx_resp: UnboundedSender<SenderMsg<Req, Resp>>) {
+    async fn run_client(
+        self,
+        id: Uuid,
+        stream: TcpStream,
+        rx_resp: UnboundedReceiver<SenderMsg<Req, Resp>>,
+        tx_resp: UnboundedSender<SenderMsg<Req, Resp>>,
+    ) {
         let ws_stream = accept_async(stream).await.unwrap();
         let (mut write, mut read) = futures::StreamExt::split(ws_stream);
         let server = self.clone();
@@ -210,38 +222,44 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         });
     }
 
-    async fn write(&self,
-                   write: &mut SplitSink<WebSocketStream<TcpStream>, tungstenite::Message>,
-                   msg: Merged<Req, Resp>) -> bool {
+    async fn write(
+        &self,
+        write: &mut SplitSink<WebSocketStream<TcpStream>, tungstenite::Message>,
+        msg: Merged<Req, Resp>,
+    ) -> bool {
         match msg {
             Merged::Interval => {
-                if let Err(_) = write.send(tungstenite::Message::Ping(vec![1, 2, 3, 4])).await {
+                if let Err(_) = write
+                    .send(tungstenite::Message::Ping(vec![1, 2, 3, 4]))
+                    .await
+                {
                     return false;
                 }
             }
-            Merged::Msg(x) => {
-                match x {
-                    SenderMsg::Pong(x) => {
-                        if let Err(_) = write.send(tungstenite::Message::Pong(x)).await {
-                            return false;
-                        }
-                    }
-                    SenderMsg::Drop => return false,
-                    SenderMsg::Message(msg) => {
-                        let data = serde_json::to_string(&msg).unwrap();
-                        if let Err(_) = write.send(tungstenite::Message::Text(data)).await {
-                            return false;
-                        }
+            Merged::Msg(x) => match x {
+                SenderMsg::Pong(x) => {
+                    if let Err(_) = write.send(tungstenite::Message::Pong(x)).await {
+                        return false;
                     }
                 }
-            }
+                SenderMsg::Drop => return false,
+                SenderMsg::Message(msg) => {
+                    let data = serde_json::to_string(&msg).unwrap();
+                    if let Err(_) = write.send(tungstenite::Message::Text(data)).await {
+                        return false;
+                    }
+                }
+            },
         }
         true
     }
 
-    async fn handle_rx(&self, client_id: Uuid,
-                       msg: Result<tungstenite::Message, tungstenite::Error>,
-                       tx_resp: &UnboundedSender<SenderMsg<Req, Resp>>) -> bool {
+    async fn handle_rx(
+        &self,
+        client_id: Uuid,
+        msg: Result<tungstenite::Message, tungstenite::Error>,
+        tx_resp: &UnboundedSender<SenderMsg<Req, Resp>>,
+    ) -> bool {
         match msg {
             Ok(msg) => {
                 match msg {
@@ -258,13 +276,12 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                             }
                         }
                     }
-                    tungstenite::Message::Ping(data) =>
-                        tx_resp.send(SenderMsg::Pong(data)).is_ok(),
+                    tungstenite::Message::Ping(data) => tx_resp.send(SenderMsg::Pong(data)).is_ok(),
                     tungstenite::Message::Close(_) => false,
-                    _ => true
+                    _ => true,
                 }
             }
-            Err(_) => false
+            Err(_) => false,
         }
     }
 
@@ -275,15 +292,19 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
             id: msg.id,
             message: msg.message.clone(),
         };
-        server.broadcast_internal(SenderMsg::Message(broadcast)).await;
-        self.tx_req.send(Requested {
-            msg: msg.message,
-            reply: Reply {
-                id,
-                server,
-                direct: None,
-            },
-        }).is_ok()
+        server
+            .broadcast_internal(SenderMsg::Message(broadcast))
+            .await;
+        self.tx_req
+            .send(Requested {
+                msg: msg.message,
+                reply: Reply {
+                    id,
+                    server,
+                    direct: None,
+                },
+            })
+            .is_ok()
     }
 
     async fn handle_invalid_msg(&self, client_id: &Uuid, err: serde_json::Error) {

@@ -1,8 +1,8 @@
 use std::io;
 use std::time::{Duration, Instant};
 
-use futures::{SinkExt, StreamExt};
 use futures::stream::{SplitSink, SplitStream};
+use futures::{SinkExt, StreamExt};
 use serde::de::DeserializeOwned;
 use thiserror::Error;
 use tokio::io::ErrorKind;
@@ -49,10 +49,12 @@ pub struct Client<Req: Message, Resp: Message> {
     tx_bc: BcSender<Response<Req, Resp>>,
 }
 
-impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + DeserializeOwned> Client<Req, Resp> {
+impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + DeserializeOwned>
+    Client<Req, Resp>
+{
     pub async fn connect<A>(url: A, duration: Duration) -> io::Result<Self>
-        where
-            A: Into<Url>
+    where
+        A: Into<Url>,
     {
         let start = Instant::now();
         let url = url.into();
@@ -74,7 +76,10 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
             }
             delay_for(Duration::from_millis(10)).await;
         }
-        Err(io::Error::new(ErrorKind::TimedOut, "Timeout during connection attempts."))
+        Err(io::Error::new(
+            ErrorKind::TimedOut,
+            "Timeout during connection attempts.",
+        ))
     }
 
     pub fn with_stream(stream: WsStream) -> Self {
@@ -86,13 +91,9 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
             tx_bc: receiver_tx.clone(),
         };
         let client = ret.clone();
-        task::spawn(async move {
-            client.receiver(read, receiver_tx).await
-        });
+        task::spawn(async move { client.receiver(read, receiver_tx).await });
         let client = ret.clone();
-        task::spawn(async move {
-            client.sender(write, sender_rx).await
-        });
+        task::spawn(async move { client.sender(write, sender_rx).await });
         ret
     }
 
@@ -129,7 +130,10 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
                             break;
                         }
                     }
-                    Response::Reply { request: _, message } => {
+                    Response::Reply {
+                        request: _,
+                        message,
+                    } => {
                         if tx.send(message).is_err() {
                             break;
                         }
@@ -190,43 +194,43 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
     pub async fn query(&self, req: Req, duration: Duration) -> Result<Resp, ClientError> {
         match timeout(duration, self.do_query_no_timeout(req)).await {
             Ok(x) => x,
-            Err(_) => {
-                Err(ClientError::Timeout)
-            }
+            Err(_) => Err(ClientError::Timeout),
         }
     }
 
     async fn receiver(self, mut read: SplitStream<WsStream>, tx: BcSender<Response<Req, Resp>>) {
         while let Some(msg) = read.next().await {
             match msg {
-                Ok(msg) => {
-                    match msg {
-                        tungstenite::Message::Text(text) => {
-                            if let Ok(resp) = serde_json::from_str::<Response<Req, Resp>>(&text) {
-                                if tx.send(resp).is_err() {
-                                    break;
-                                }
-                            }
-                        }
-                        tungstenite::Message::Ping(data) => {
-                            if self.tx.send(SenderMsg::Pong(data)).is_err() {
+                Ok(msg) => match msg {
+                    tungstenite::Message::Text(text) => {
+                        if let Ok(resp) = serde_json::from_str::<Response<Req, Resp>>(&text) {
+                            if tx.send(resp).is_err() {
                                 break;
                             }
                         }
-                        tungstenite::Message::Close(_) => {
-                            let _ = self.tx.send(SenderMsg::Drop);
+                    }
+                    tungstenite::Message::Ping(data) => {
+                        if self.tx.send(SenderMsg::Pong(data)).is_err() {
                             break;
                         }
-                        _ => {}
                     }
-                }
+                    tungstenite::Message::Close(_) => {
+                        let _ = self.tx.send(SenderMsg::Drop);
+                        break;
+                    }
+                    _ => {}
+                },
                 Err(_) => break,
             }
         }
         let _ = self.tx.send(SenderMsg::Drop);
     }
 
-    async fn sender(self, mut write: SplitSink<WsStream, tungstenite::Message>, mut rx: UnboundedReceiver<SenderMsg<Req>>) {
+    async fn sender(
+        self,
+        mut write: SplitSink<WsStream, tungstenite::Message>,
+        mut rx: UnboundedReceiver<SenderMsg<Req>>,
+    ) {
         while let Some(req) = rx.recv().await {
             match req {
                 SenderMsg::Drop => {
@@ -251,5 +255,3 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
         }
     }
 }
-
-

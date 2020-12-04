@@ -2,9 +2,9 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::string::FromUtf8Error;
 
-use hyper::{Body, Request as HyperRequest, Response as HyperResponse};
-use hyper::Server as HyperServer;
 use hyper::service::{make_service_fn, service_fn};
+use hyper::Server as HyperServer;
+use hyper::{Body, Request as HyperRequest, Response as HyperResponse};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use tokio::stream::StreamExt;
@@ -13,9 +13,9 @@ use tokio::sync::oneshot;
 use tokio::task;
 use uuid::Uuid;
 
-use crate::{Message, Response};
-use crate::server::{Requested, SenderMsg, Server};
 use crate::server::Reply;
+use crate::server::{Requested, SenderMsg, Server};
+use crate::{Message, Response};
 
 #[derive(Clone)]
 pub(crate) struct HttpServer<Req: Message, Resp: Message> {
@@ -23,8 +23,14 @@ pub(crate) struct HttpServer<Req: Message, Resp: Message> {
     tx: UnboundedSender<Requested<Req, Resp>>,
 }
 
-impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static + Send> HttpServer<Req, Resp> {
-    pub(crate) fn spawn(addr: SocketAddr, server: Server<Req, Resp>, tx: UnboundedSender<Requested<Req, Resp>>) -> Self {
+impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static + Send>
+    HttpServer<Req, Resp>
+{
+    pub(crate) fn spawn(
+        addr: SocketAddr,
+        server: Server<Req, Resp>,
+        tx: UnboundedSender<Requested<Req, Resp>>,
+    ) -> Self {
         let server = HttpServer { server, tx };
         let ret = server.clone();
 
@@ -47,15 +53,12 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
 
     fn respond_error<T: ToString>(desc: &str, err: T) -> Result<HyperResponse<Body>, hyper::Error> {
         let resp = json!({
-                    "error": desc,
-                    "reason": err.to_string(),
-                });
+            "error": desc,
+            "reason": err.to_string(),
+        });
         let resp = resp.to_string();
         let body: Body = resp.as_bytes().to_vec().into();
-        return Ok(HyperResponse::builder()
-            .status(400)
-            .body(body)
-            .unwrap());
+        return Ok(HyperResponse::builder().status(400).body(body).unwrap());
     }
 
     async fn handle(self, req: HyperRequest<Body>) -> Result<HyperResponse<Body>, hyper::Error> {
@@ -84,10 +87,12 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
         };
         let broadcast = Response::Request {
             id: uuid,
-            message: request
+            message: request,
         };
 
-        self.server.broadcast_internal(SenderMsg::Message(broadcast)).await;
+        self.server
+            .broadcast_internal(SenderMsg::Message(broadcast))
+            .await;
 
         // TODO: shutdown server in case this channel breaks
         let _ = self.tx.send(req);
@@ -109,5 +114,3 @@ async fn collect_body(mut body: Body) -> Result<String, FromUtf8Error> {
     }
     String::from_utf8(ret)
 }
-
-

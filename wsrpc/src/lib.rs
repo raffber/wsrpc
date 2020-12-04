@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-mod http;
 pub mod client;
+mod http;
 pub mod server;
 
 pub trait Message: Send + Clone + Serialize {}
@@ -21,22 +21,15 @@ impl<M: Message> Request<M> {
     pub fn new(msg: M) -> Self {
         Request {
             id: Uuid::new_v4(),
-            message: msg
+            message: msg,
         }
     }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum Response<Req: Message, Resp: Message> {
-    Reply {
-        request: Uuid,
-        message: Resp,
-    },
+    Reply { request: Uuid, message: Resp },
     Notify(Resp),
     Error(String),
-    Request {
-        id: Uuid,
-        message: Req,
-    },
+    Request { id: Uuid, message: Req },
 }
-
