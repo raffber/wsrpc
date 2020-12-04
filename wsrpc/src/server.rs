@@ -31,6 +31,7 @@ pub(crate) enum SenderMsg<Req: Message, Resp: Message> {
 
 struct ServerShared<Req: Message, Resp: Message> {
     connections: HashMap<Uuid, UnboundedSender<SenderMsg<Req, Resp>>>,
+    abort_handles: Vec<oneshot::Sender<()>>,
 }
 
 #[derive(Clone)]
@@ -119,6 +120,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         let (tx_req, rx_req) = unbounded_channel();
         let inner = ServerShared {
             connections: Default::default(),
+            abort_handles: vec![],
         };
         let server = Self {
             inner: Arc::new(RwLock::new(inner)),
@@ -127,26 +129,43 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         (server, rx_req)
     }
 
-    pub async fn listen<A: ToSocketAddrs>(&self, addr: A, http_addr: SocketAddr) {
+    pub async fn listen_ws<A: ToSocketAddrs>(&self, addr: A) {
         info!("WsRpc Server Listening");
         let mut listener = TcpListener::bind(addr).await.expect("Failed to bind");
 
-        HttpServer::spawn(http_addr, self.clone(), self.tx_req.clone());
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+        {
+            let mut write = self.inner.write().await;
+            write.abort_handles.push(cancel_tx);
+        }
 
         let server = self.clone();
         task::spawn(async move {
-            while let Ok((stream, path)) = listener.accept().await {
-                info!("Client connected on: {}", path);
-                let (tx_resp, rx_resp) = unbounded_channel();
-                let id = Uuid::new_v4();
-                let mut write = server.inner.write().await;
-                write.connections.insert(id, tx_resp.clone());
-                server
-                    .clone()
-                    .run_client(id, stream, rx_resp, tx_resp)
-                    .await;
+            let accept_loop = async move {
+                loop {
+                    server.ws_accept(&mut listener).await
+                }
+            };
+            tokio::select! {
+                _ = accept_loop => {},
+                _ = cancel_rx => {},
             }
         });
+    }
+
+    async fn ws_accept(&self, listener: &mut TcpListener) {
+        if let Ok((stream, path)) = listener.accept().await {
+            info!("Client connected on: {}", path);
+            let (tx_resp, rx_resp) = unbounded_channel();
+            let id = Uuid::new_v4();
+            let mut write = self.inner.write().await;
+            write.connections.insert(id, tx_resp.clone());
+            self.clone().run_client(id, stream, rx_resp, tx_resp).await;
+        }
+    }
+
+    pub async fn listen_http<T: Into<SocketAddr>>(&self, http_addr: T) {
+        HttpServer::spawn(http_addr, self.clone(), self.tx_req.clone());
     }
 
     pub async fn loopback(&self) -> LoopbackClient<Req, Resp> {

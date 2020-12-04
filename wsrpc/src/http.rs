@@ -26,8 +26,8 @@ pub(crate) struct HttpServer<Req: Message, Resp: Message> {
 impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static + Send>
     HttpServer<Req, Resp>
 {
-    pub(crate) fn spawn(
-        addr: SocketAddr,
+    pub(crate) fn spawn<T: Into<SocketAddr>>(
+        addr: T,
         server: Server<Req, Resp>,
         tx: UnboundedSender<Requested<Req, Resp>>,
     ) -> Self {
@@ -45,7 +45,7 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
             }
         });
 
-        let hyper_server = HyperServer::bind(&addr).serve(make_svc);
+        let hyper_server = HyperServer::bind(&addr.into()).serve(make_svc);
         log::debug!("HTTP server listening.");
         task::spawn(hyper_server);
         ret
