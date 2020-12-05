@@ -225,7 +225,11 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         rx_resp: UnboundedReceiver<SenderMsg<Req, Resp>>,
         tx_resp: UnboundedSender<SenderMsg<Req, Resp>>,
     ) {
-        let ws_stream = accept_async(stream).await.unwrap();
+        let ws_stream = accept_async(stream).await;
+        if ws_stream.is_err() {
+            return;
+        }
+        let ws_stream = ws_stream.unwrap();
         let (mut write, mut read) = futures::StreamExt::split(ws_stream);
         let server = self.clone();
         task::spawn(async move {
