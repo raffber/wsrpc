@@ -32,12 +32,12 @@ pub(crate) enum SenderMsg<Req: Message, Resp: Message> {
 struct ServerShared<Req: Message, Resp: Message> {
     connections: HashMap<Uuid, UnboundedSender<SenderMsg<Req, Resp>>>,
     abort_handles: Vec<oneshot::Sender<()>>,
+    tx_req: Option<UnboundedSender<Requested<Req, Resp>>>,
 }
 
 #[derive(Clone)]
 pub struct Server<Req: Message, Resp: Message> {
     inner: Arc<RwLock<ServerShared<Req, Resp>>>,
-    tx_req: UnboundedSender<Requested<Req, Resp>>,
 }
 
 pub struct Reply<Req: Message, Resp: Message> {
@@ -121,10 +121,10 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         let inner = ServerShared {
             connections: Default::default(),
             abort_handles: vec![],
+            tx_req: Some(tx_req),
         };
         let server = Self {
             inner: Arc::new(RwLock::new(inner)),
-            tx_req,
         };
         (server, rx_req)
     }
@@ -150,7 +150,17 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                 _ = accept_loop => {},
                 _ = cancel_rx => {},
             }
+            debug!("Dropping ws listener.");
         });
+    }
+
+    pub async fn dispatch_request(&self, req: Requested<Req, Resp>) -> bool {
+        let read = self.inner.read().await;
+        if let Some(tx) = &read.tx_req {
+            tx.send(req).is_ok()
+        } else {
+            false
+        }
     }
 
     async fn ws_accept(&self, listener: &mut TcpListener) {
@@ -165,7 +175,9 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
     }
 
     pub async fn listen_http<T: Into<SocketAddr>>(&self, http_addr: T) {
-        HttpServer::spawn(http_addr, self.clone(), self.tx_req.clone());
+        let abort_handle = HttpServer::spawn(http_addr, self.clone());
+        let mut write = self.inner.write().await;
+        write.abort_handles.push(abort_handle);
     }
 
     pub async fn loopback(&self) -> LoopbackClient<Req, Resp> {
@@ -314,16 +326,15 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         server
             .broadcast_internal(SenderMsg::Message(broadcast))
             .await;
-        self.tx_req
-            .send(Requested {
-                msg: msg.message,
-                reply: Reply {
-                    id,
-                    server,
-                    direct: None,
-                },
-            })
-            .is_ok()
+        self.dispatch_request(Requested {
+            msg: msg.message,
+            reply: Reply {
+                id,
+                server,
+                direct: None,
+            },
+        })
+        .await
     }
 
     async fn handle_invalid_msg(&self, client_id: &Uuid, err: serde_json::Error) {
@@ -371,6 +382,12 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
             let _ = con.send(SenderMsg::Drop);
         }
         write.connections.clear();
+        // abort all client handlers
+        for x in write.abort_handles.drain(..) {
+            let _ = x.send(());
+        }
+        // drop sender
+        let _ = write.tx_req.take();
     }
 
     async fn remove_client(&self, id: &Uuid) {

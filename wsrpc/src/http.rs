@@ -1,14 +1,12 @@
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::string::FromUtf8Error;
 
+use futures::FutureExt;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::Server as HyperServer;
 use hyper::{Body, Request as HyperRequest, Response as HyperResponse};
 use serde::de::DeserializeOwned;
 use serde_json::json;
-use tokio::stream::StreamExt;
-use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 use tokio::task;
 use uuid::Uuid;
@@ -20,7 +18,6 @@ use crate::{Message, Response};
 #[derive(Clone)]
 pub(crate) struct HttpServer<Req: Message, Resp: Message> {
     server: Server<Req, Resp>,
-    tx: UnboundedSender<Requested<Req, Resp>>,
 }
 
 impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static + Send>
@@ -29,10 +26,8 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
     pub(crate) fn spawn<T: Into<SocketAddr>>(
         addr: T,
         server: Server<Req, Resp>,
-        tx: UnboundedSender<Requested<Req, Resp>>,
-    ) -> Self {
-        let server = HttpServer { server, tx };
-        let ret = server.clone();
+    ) -> oneshot::Sender<()> {
+        let server = HttpServer { server };
 
         let make_svc = make_service_fn(move |_| {
             let server = server.clone();
@@ -45,10 +40,15 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
             }
         });
 
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+
         let hyper_server = HyperServer::bind(&addr.into()).serve(make_svc);
+        let graceful =
+            hyper_server.with_graceful_shutdown(async move { cancel_rx.map(|_| ()).await });
+
         log::debug!("HTTP server listening.");
-        task::spawn(hyper_server);
-        ret
+        task::spawn(graceful);
+        cancel_tx
     }
 
     fn respond_error<T: ToString>(desc: &str, err: T) -> Result<HyperResponse<Body>, hyper::Error> {
@@ -95,7 +95,7 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
             .await;
 
         // TODO: shutdown server in case this channel breaks
-        let _ = self.tx.send(req);
+        let _ = self.server.dispatch_request(req).await;
         let resp = if let Ok(x) = rx.await {
             x
         } else {
@@ -105,12 +105,4 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
         let body: Body = ret.into();
         Ok(HyperResponse::new(body))
     }
-}
-
-async fn collect_body(mut body: Body) -> Result<String, FromUtf8Error> {
-    let mut ret = Vec::new();
-    while let Some(Ok(x)) = body.next().await {
-        ret.extend_from_slice(&x)
-    }
-    String::from_utf8(ret)
 }
