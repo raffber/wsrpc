@@ -168,8 +168,10 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
             info!("Client connected on: {}", path);
             let (tx_resp, rx_resp) = unbounded_channel();
             let id = Uuid::new_v4();
-            let mut write = self.inner.write().await;
-            write.connections.insert(id, tx_resp.clone());
+            {
+                let mut write = self.inner.write().await;
+                write.connections.insert(id, tx_resp.clone());
+            }
             self.clone().run_client(id, stream, rx_resp, tx_resp).await;
         }
     }
@@ -399,5 +401,52 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         if let Some(client) = write.connections.remove(&id) {
             let _ = client.send(SenderMsg::Drop);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde::{Serialize, Deserialize};
+
+    #[derive(Clone, Serialize, Deserialize)]
+    enum Request {
+        Shutdown,
+    }
+
+    #[derive(Clone, Serialize, Deserialize)]
+    enum Response {
+        Done,
+    }
+
+    type Server = super::Server<Request, Response>;
+
+    #[tokio::test]
+    async fn shutdown_one() {
+        let (server, mut rx) = Server::new();
+
+        let client = server.loopback().await;
+        let (tx, _) = client.split();
+        let _ = tx.send(crate::Request::new(Request::Shutdown));
+
+        let msg = rx.recv().await.unwrap();
+        let (req, _) = msg.split();
+        assert!(matches!(req, Request::Shutdown));
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_two() {
+        let (server, _) = Server::new();
+
+        let mut client = server.loopback().await;
+
+        server.broadcast(Response::Done).await;
+        let rx_msg = client.next().await.unwrap();
+        match rx_msg {
+            crate::Response::Notify(msg) => assert!(matches!(msg, Response::Done)),
+            _ => panic!(),
+        }
+
+        server.shutdown().await;
     }
 }
