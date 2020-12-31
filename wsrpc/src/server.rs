@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::RwLock;
 
 use futures::stream::SplitSink;
 use futures::SinkExt;
@@ -11,7 +12,6 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::stream::StreamExt;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
-use tokio::sync::RwLock;
 use tokio::task;
 use tokio::time;
 use tokio::time::Duration;
@@ -33,6 +33,7 @@ struct ServerShared<Req: Message, Resp: Message> {
     connections: HashMap<Uuid, UnboundedSender<SenderMsg<Req, Resp>>>,
     abort_handles: Vec<oneshot::Sender<()>>,
     tx_req: Option<UnboundedSender<Requested<Req, Resp>>>,
+    broadcast_reqrep: bool,
 }
 
 #[derive(Clone)]
@@ -44,16 +45,44 @@ pub struct Reply<Req: Message, Resp: Message> {
     pub(crate) id: Uuid,
     pub(crate) server: Server<Req, Resp>,
     pub(crate) direct: Option<oneshot::Sender<Resp>>,
+    pub(crate) sender: Option<Uuid>,
 }
 
 impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Reply<Req, Resp> {
-    pub fn answer(mut self, resp: Resp) {
+    pub fn answer(self, resp: Resp) {
+        let broadcast = { self.server.inner.read().unwrap().broadcast_reqrep };
+        if broadcast {
+            self.answer_broadcast(resp);
+        } else {
+            self.answer_unicast(resp);
+        }
+    }
+
+    pub fn answer_unicast(mut self, resp: Resp) {
         if let Some(direct) = self.direct.take() {
             let _ = direct.send(resp.clone());
         }
         let resp = Response::Reply {
             request: self.id.clone(),
             message: resp,
+            sender: self.sender,
+        };
+        task::spawn(async move {
+            let sender = self.sender.clone();
+            if let Some(sender) = sender {
+                self.server.unicast(&sender, SenderMsg::Message(resp)).await;
+            }
+        });
+    }
+
+    pub fn answer_broadcast(mut self, resp: Resp) {
+        if let Some(direct) = self.direct.take() {
+            let _ = direct.send(resp.clone());
+        }
+        let resp = Response::Reply {
+            request: self.id.clone(),
+            message: resp,
+            sender: self.sender,
         };
         task::spawn(async move {
             self.server
@@ -122,11 +151,17 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
             connections: Default::default(),
             abort_handles: vec![],
             tx_req: Some(tx_req),
+            broadcast_reqrep: false,
         };
         let server = Self {
             inner: Arc::new(RwLock::new(inner)),
         };
         (server, rx_req)
+    }
+
+    pub fn enable_broadcast_reqrep(&self, enable_reqrep: bool) {
+        let mut write = self.inner.write().unwrap();
+        write.broadcast_reqrep = enable_reqrep;
     }
 
     pub async fn listen_ws<A: ToSocketAddrs>(&self, addr: A) {
@@ -135,7 +170,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
 
         let (cancel_tx, cancel_rx) = oneshot::channel();
         {
-            let mut write = self.inner.write().await;
+            let mut write = self.inner.write().unwrap();
             write.abort_handles.push(cancel_tx);
         }
 
@@ -155,7 +190,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
     }
 
     pub async fn dispatch_request(&self, req: Requested<Req, Resp>) -> bool {
-        let read = self.inner.read().await;
+        let read = self.inner.read().unwrap();
         if let Some(tx) = &read.tx_req {
             tx.send(req).is_ok()
         } else {
@@ -169,7 +204,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
             let (tx_resp, rx_resp) = unbounded_channel();
             let id = Uuid::new_v4();
             {
-                let mut write = self.inner.write().await;
+                let mut write = self.inner.write().unwrap();
                 write.connections.insert(id, tx_resp.clone());
             }
             self.clone().run_client(id, stream, rx_resp, tx_resp).await;
@@ -178,7 +213,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
 
     pub async fn listen_http<T: Into<SocketAddr>>(&self, http_addr: T) {
         let abort_handle = HttpServer::spawn(http_addr, self.clone());
-        let mut write = self.inner.write().await;
+        let mut write = self.inner.write().unwrap();
         write.abort_handles.push(abort_handle);
     }
 
@@ -186,15 +221,16 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         let (client_tx, mut client_rx) = unbounded_channel::<Request<Req>>();
         let (sender_tx, mut sender_rx) = unbounded_channel();
         let (network_tx, network_rx) = unbounded_channel();
-
+        let client_id = Uuid::new_v4();
         {
-            let mut write = self.inner.write().await;
-            write.connections.insert(Uuid::new_v4(), sender_tx);
+            let mut write = self.inner.write().unwrap();
+            write.connections.insert(client_id, sender_tx);
         }
 
         let server = self.clone();
         task::spawn(async move {
-            while let Some(msg) = client_rx.recv().await {
+            while let Some(mut msg) = client_rx.recv().await {
+                msg.sender = Some(client_id);
                 server.handle_valid_msg(msg).await;
             }
         });
@@ -303,8 +339,9 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                     tungstenite::Message::Text(text) => {
                         debug!("Message received: `{}`", text);
                         match serde_json::from_str::<Request<Req>>(&text) {
-                            Ok(msg) => {
+                            Ok(mut msg) => {
                                 // we drop in case the receiver of the requests drops
+                                msg.sender = Some(client_id);
                                 self.handle_valid_msg(msg).await
                             }
                             Err(err) => {
@@ -329,15 +366,19 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
             id: msg.id,
             message: msg.message.clone(),
         };
-        server
-            .broadcast_internal(SenderMsg::Message(broadcast))
-            .await;
+        let bc = { self.inner.read().unwrap().broadcast_reqrep };
+        if bc {
+            server
+                .broadcast_internal(SenderMsg::Message(broadcast))
+                .await;
+        }
         self.dispatch_request(Requested {
             msg: msg.message,
             reply: Reply {
                 id,
                 server,
                 direct: None,
+                sender: msg.sender,
             },
         })
         .await
@@ -350,7 +391,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
     }
 
     async fn send(&self, id: &Uuid, msg: Response<Req, Resp>) {
-        let mut write = self.inner.write().await;
+        let mut write = self.inner.write().unwrap();
         if let Some(con) = write.connections.get(id) {
             if let Err(_) = con.send(SenderMsg::Message(msg)) {
                 write.connections.remove(id);
@@ -369,7 +410,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
     pub(crate) async fn broadcast_internal(&self, resp: SenderMsg<Req, Resp>) {
         let mut to_remove = HashSet::new();
         {
-            let read = self.inner.read().await;
+            let read = self.inner.read().unwrap();
             for (id, con) in &read.connections {
                 if let Err(_) = con.send(resp.clone()) {
                     to_remove.insert(*id);
@@ -381,9 +422,24 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         }
     }
 
+    pub(crate) async fn unicast(&self, sender: &Uuid, msg: SenderMsg<Req, Resp>) {
+        let mut to_remove = None;
+        {
+            let read = self.inner.read().unwrap();
+            if let Some(con) = read.connections.get(sender) {
+                if let Err(_) = con.send(msg) {
+                    to_remove.replace(sender);
+                }
+            }
+        }
+        if let Some(x) = to_remove {
+            self.remove_client(&x).await;
+        }
+    }
+
     pub async fn shutdown(&self) {
         info!("Closing all client connections.");
-        let mut write = self.inner.write().await;
+        let mut write = self.inner.write().unwrap();
         for (_id, con) in &write.connections {
             let _ = con.send(SenderMsg::Drop);
         }
@@ -397,7 +453,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
     }
 
     async fn remove_client(&self, id: &Uuid) {
-        let mut write = self.inner.write().await;
+        let mut write = self.inner.write().unwrap();
         if let Some(client) = write.connections.remove(&id) {
             let _ = client.send(SenderMsg::Drop);
         }
@@ -406,7 +462,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
 
 #[cfg(test)]
 mod tests {
-    use serde::{Serialize, Deserialize};
+    use serde::{Deserialize, Serialize};
 
     #[derive(Clone, Serialize, Deserialize)]
     enum Request {

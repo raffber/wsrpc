@@ -83,6 +83,7 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
                 id: uuid,
                 server: self.server.clone(),
                 direct: Some(tx),
+                sender: None
             },
         };
         let broadcast = Response::Request {

@@ -133,6 +133,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
                     Response::Reply {
                         request: _,
                         message,
+                        sender: _,
                     } => {
                         if tx.send(message).is_err() {
                             break;
@@ -151,7 +152,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
         task::spawn(async move {
             while let Ok(req) = rx_bc.recv().await {
                 match req {
-                    Response::Reply { request, message } => {
+                    Response::Reply { request, message, .. } => {
                         if tx.send((message, request)).is_err() {
                             break;
                         }
@@ -168,6 +169,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
         let msg = Request {
             id: id.clone(),
             message: msg,
+            sender: None
         };
         let msg = SenderMsg::Message(msg);
         self.tx.send(msg).ok().map(|_| id)
