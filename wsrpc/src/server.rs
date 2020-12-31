@@ -263,6 +263,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         rx_resp: UnboundedReceiver<SenderMsg<Req, Resp>>,
         tx_resp: UnboundedSender<SenderMsg<Req, Resp>>,
     ) {
+        let _ = stream.set_nodelay(true);
         let ws_stream = accept_async(stream).await;
         if ws_stream.is_err() {
             return;

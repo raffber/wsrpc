@@ -83,6 +83,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
     }
 
     pub fn with_stream(stream: WsStream) -> Self {
+        let _ = stream.get_ref().set_nodelay(true);
         let (write, read) = stream.split();
         let (receiver_tx, _) = bc_channel(BC_CHANNEL_SIZE);
         let (sender_tx, sender_rx) = unbounded_channel();
