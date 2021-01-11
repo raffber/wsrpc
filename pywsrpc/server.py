@@ -1,5 +1,6 @@
 import asyncio
 import json
+from asyncio import iscoroutinefunction
 from uuid import UUID
 
 import msgpack
@@ -154,6 +155,10 @@ class Connection(object):
             await self._server.send_error("Invalid UUID")
             return
         # call back into the application
-        reply = self._server.handler(msg['message'])
+        handler = self._server.handler
+        if iscoroutinefunction(handler):
+            reply = await handler(self._server, msg['message'])
+        else:
+            reply = handler(self._server, msg['message'])
         if reply is not None:
             await self._server.answer(id, reply)

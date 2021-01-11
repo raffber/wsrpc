@@ -9,15 +9,16 @@ from websockets import connect
 RX_QUEUE_SIZE = 1000
 
 
-class ReceiverDisconnected(Exception):
-    pass
-
-
 class Receiver(object):
-    def __init__(self, client):
+    def __init__(self, client, flt):
         self._queue = Queue(RX_QUEUE_SIZE)
         self._client = client
-        self._connected = True
+        self._flt = flt
+        self._connected = False
+
+    @property
+    def flt(self):
+        return self._flt
 
     @property
     def client(self):
@@ -37,16 +38,19 @@ class Receiver(object):
         return msg
 
     def disconnect(self):
-        try:
+        if self._connected:
             self._client._unregister(self)
-        except ReceiverDisconnected:
-            pass
-        self._connected = False
+            self._connected = False
+        return self
+
+    def connect(self):
+        if not self._connected:
+            self._client._register(self)
+            self._connected = True
+        return self
 
     def __enter__(self):
-        if not self._connected:
-            raise ReceiverDisconnected()
-        return self
+        return self.connect()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.disconnect()
@@ -64,6 +68,17 @@ class Receiver(object):
 
     def clear_all(self):
         self.get_all()
+
+    def map(self, fun):
+        flt = self._flt
+
+        def new_fun(x):
+            x = flt(x)
+            if x is not None:
+                return fun(x)
+            return None
+
+        return Receiver(self._client, new_fun)
 
 
 class Client(object):
@@ -102,10 +117,10 @@ class Client(object):
                     msg = json.loads(msg)
             except:
                 continue
-            for (flt, receiver) in self._receivers.values():
+            for receiver in self._receivers.values():
                 try:
                     assert isinstance(receiver, Receiver)
-                    mapped = flt(msg)
+                    mapped = receiver.flt(msg)
                     if mapped is not None:
                         try:
                             receiver.queue.put_nowait(mapped)
@@ -120,15 +135,32 @@ class Client(object):
         self._ws = None
 
     def listen(self, flt=lambda msg: msg) -> Receiver:
-        rx = Receiver(self)
-        self._receivers[id(rx)] = (flt, rx)
+        rx = Receiver(self, flt)
         return rx
+
+    def replies(self):
+        return self.listen(lambda x: x['Reply']['message'] if 'Reply' in x else None)
+
+    def notifications(self):
+        return self.listen(lambda x: x['Notify'] if 'Notify' in x else None)
+
+    def messages(self):
+        def mapper(x):
+            if 'Reply' in x:
+                return x['Reply']['message']
+            elif 'Notify' in x:
+                return x['Notify']
+            return None
+
+        return self.listen(mapper)
+
+    def _register(self, rx: Receiver):
+        self._receivers[id(rx)] = rx
 
     def _unregister(self, rx: Receiver):
         key = id(rx)
-        if key not in self._receivers:
-            raise ReceiverDisconnected
-        del self._receivers[id(rx)]
+        if key in self._receivers:
+            del self._receivers[id(rx)]
 
     async def send_request(self, msg, id=None) -> str:
         """
