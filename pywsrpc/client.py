@@ -184,13 +184,9 @@ class Client(object):
                 return msg['Reply']['message']
             return None
 
-        rx = self.listen(flt)
-        await self.send_request(msg, id=id)
-        try:
+        with self.listen(flt) as rx:
+            await self.send_request(msg, id=id)
             return await asyncio.wait_for(rx.next(), timeout)
-        except TimeoutError:
-            pass
-        return None
 
     async def disconnect(self):
         await self._ws.close()
