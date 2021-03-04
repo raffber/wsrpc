@@ -91,9 +91,7 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
             message: request,
         };
 
-        self.server
-            .broadcast_internal(SenderMsg::Message(broadcast))
-            .await;
+        self.server.broadcast_internal(SenderMsg::Message(broadcast));
 
         // TODO: shutdown server in case this channel breaks
         let _ = self.server.dispatch_request(req).await;

@@ -67,12 +67,10 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Reply<R
             message: resp,
             sender: self.sender,
         };
-        task::spawn(async move {
-            let sender = self.sender.clone();
-            if let Some(sender) = sender {
-                self.server.unicast(&sender, SenderMsg::Message(resp)).await;
-            }
-        });
+        let sender = self.sender.clone();
+        if let Some(sender) = sender {
+            self.server.unicast(&sender, SenderMsg::Message(resp));
+        }
     }
 
     pub fn answer_broadcast(mut self, resp: Resp) {
@@ -84,11 +82,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Reply<R
             message: resp,
             sender: self.sender,
         };
-        task::spawn(async move {
-            self.server
-                .broadcast_internal(SenderMsg::Message(resp))
-                .await;
-        });
+        self.server.broadcast_internal(SenderMsg::Message(resp));
     }
 }
 
@@ -280,7 +274,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                     break;
                 }
             }
-            server.remove_client(&id).await;
+            server.remove_client(&id);
             let _ = write.close().await;
             debug!("Dropping sender of client: {}", id);
         });
@@ -292,7 +286,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                 }
             }
             info!("Dropping receiver of client: {}", id);
-            server.remove_client(&id).await;
+            server.remove_client(&id);
         });
     }
 
@@ -319,6 +313,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                 SenderMsg::Drop => return false,
                 SenderMsg::Message(msg) => {
                     let data = serde_json::to_string(&msg).unwrap();
+                    log::debug!("Sending: {}", data);
                     if let Err(_) = write.send(tungstenite::Message::Text(data)).await {
                         return false;
                     }
@@ -369,9 +364,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         };
         let bc = { self.inner.read().unwrap().broadcast_reqrep };
         if bc {
-            server
-                .broadcast_internal(SenderMsg::Message(broadcast))
-                .await;
+            server.broadcast_internal(SenderMsg::Message(broadcast));
         }
         self.dispatch_request(Requested {
             msg: msg.message,
@@ -400,15 +393,13 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         }
     }
 
-    pub async fn broadcast(&self, resp: Resp) {
+    pub fn broadcast(&self, resp: Resp) {
         let msg = SenderMsg::Message(Response::Notify(resp));
         let server = self.clone();
-        task::spawn(async move {
-            server.broadcast_internal(msg).await;
-        });
+        server.broadcast_internal(msg);
     }
 
-    pub(crate) async fn broadcast_internal(&self, resp: SenderMsg<Req, Resp>) {
+    pub(crate) fn broadcast_internal(&self, resp: SenderMsg<Req, Resp>) {
         let mut to_remove = HashSet::new();
         {
             let read = self.inner.read().unwrap();
@@ -419,11 +410,11 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
             }
         }
         for x in &to_remove {
-            self.remove_client(x).await;
+            self.remove_client(x);
         }
     }
 
-    pub(crate) async fn unicast(&self, sender: &Uuid, msg: SenderMsg<Req, Resp>) {
+    pub(crate) fn unicast(&self, sender: &Uuid, msg: SenderMsg<Req, Resp>) {
         let mut to_remove = None;
         {
             let read = self.inner.read().unwrap();
@@ -434,7 +425,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
             }
         }
         if let Some(x) = to_remove {
-            self.remove_client(&x).await;
+            self.remove_client(&x);
         }
     }
 
@@ -453,7 +444,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         let _ = write.tx_req.take();
     }
 
-    async fn remove_client(&self, id: &Uuid) {
+    fn remove_client(&self, id: &Uuid) {
         let mut write = self.inner.write().unwrap();
         if let Some(client) = write.connections.remove(&id) {
             let _ = client.send(SenderMsg::Drop);

@@ -171,7 +171,7 @@ class Client(object):
         await self._ws.send(json.dumps({'id': id, 'message': msg}))
         return id
 
-    async def query(self, msg, timeout=1.0):
+    async def request(self, msg, timeout=1.0):
         """
         Send a request and wait for the answer.
         Returns None if no answer was received during the timeout.
