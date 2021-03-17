@@ -115,7 +115,7 @@ class Client(object):
                     msg = msgpack.unpackb(msg)
                 else:
                     msg = json.loads(msg)
-            except:
+            except Exception:
                 continue
             for receiver in self._receivers.values():
                 try:
