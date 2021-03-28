@@ -189,4 +189,6 @@ class Client(object):
             return await asyncio.wait_for(rx.next(), timeout)
 
     async def disconnect(self):
+        if self._ws is None:
+            return
         await self._ws.close()
