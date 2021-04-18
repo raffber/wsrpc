@@ -22,6 +22,8 @@ use uuid::Uuid;
 use crate::http::HttpServer;
 use crate::{Message, Request, Response};
 
+type JsonValue = serde_json::Value;
+
 #[derive(Clone)]
 pub(crate) enum SenderMsg<Req: Message, Resp: Message> {
     Drop,
@@ -323,6 +325,41 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         true
     }
 
+    async fn handle_text_message(&self, text: &str, client_id: Uuid) -> bool {
+        debug!("Message received: `{}`", text);
+        match serde_json::from_str::<Request<JsonValue>>(&text) {
+            Ok(msg) => {
+                // we drop in case the receiver of the requests drops
+                let content = serde_json::from_value::<Req>(msg.message);
+                match content {
+                    Ok(content) => {
+                        let req = Request {
+                            id: msg.id,
+                            message: content,
+                            sender: Some(client_id),
+                        };
+                        self.handle_valid_msg(req).await
+                    }
+                    Err(err) => {
+                        info!("Invalid Request: {}", err);
+                        let msg = Response::InvalidRequest {
+                            id: msg.id,
+                            description: err.to_string(),
+                        };
+                        self.send(&client_id, msg).await;
+                        true
+                    }
+                }
+            }
+            Err(err) => {
+                info!("Cannot parse message: {}", err);
+                let msg = Response::Error(err.to_string());
+                self.send(&client_id, msg).await;
+                true
+            }
+        }
+    }
+
     async fn handle_rx(
         &self,
         client_id: Uuid,
@@ -330,27 +367,12 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         tx_resp: &UnboundedSender<SenderMsg<Req, Resp>>,
     ) -> bool {
         match msg {
-            Ok(msg) => {
-                match msg {
-                    tungstenite::Message::Text(text) => {
-                        debug!("Message received: `{}`", text);
-                        match serde_json::from_str::<Request<Req>>(&text) {
-                            Ok(mut msg) => {
-                                // we drop in case the receiver of the requests drops
-                                msg.sender = Some(client_id);
-                                self.handle_valid_msg(msg).await
-                            }
-                            Err(err) => {
-                                self.handle_invalid_msg(&client_id, err).await;
-                                true
-                            }
-                        }
-                    }
-                    tungstenite::Message::Ping(data) => tx_resp.send(SenderMsg::Pong(data)).is_ok(),
-                    tungstenite::Message::Close(_) => false,
-                    _ => true,
-                }
-            }
+            Ok(msg) => match msg {
+                tungstenite::Message::Text(text) => self.handle_text_message(&text, client_id).await,
+                tungstenite::Message::Ping(data) => tx_resp.send(SenderMsg::Pong(data)).is_ok(),
+                tungstenite::Message::Close(_) => false,
+                _ => true,
+            },
             Err(_) => false,
         }
     }
@@ -376,12 +398,6 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
             },
         })
         .await
-    }
-
-    async fn handle_invalid_msg(&self, client_id: &Uuid, err: serde_json::Error) {
-        info!("Cannot parse message: {}", err);
-        let msg = Response::Error(err.to_string());
-        self.send(client_id, msg).await;
     }
 
     async fn send(&self, id: &Uuid, msg: Response<Req, Resp>) {
