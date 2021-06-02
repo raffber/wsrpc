@@ -85,7 +85,7 @@ class Server(object):
         """
         Close all connections and shut down the server
         """
-        for connection, task in self._connected.items():
+        for connection, task in list(self._connected.items()):
             await connection.close()
             # task.cancel()
         self._server.close()
