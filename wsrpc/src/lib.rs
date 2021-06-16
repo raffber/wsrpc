@@ -40,4 +40,5 @@ pub enum Response<Req: Message, Resp: Message> {
     Notify(Resp),
     Error(String),
     Request { id: Uuid, message: Req },
+    InvalidRequest { id: Uuid, description: String },
 }
