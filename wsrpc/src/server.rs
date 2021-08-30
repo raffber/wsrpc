@@ -24,6 +24,8 @@ use crate::{Message, Request, Response};
 
 type JsonValue = serde_json::Value;
 
+const MAX_LOG_CHARS: usize = 500;
+
 #[derive(Clone)]
 pub(crate) enum SenderMsg<Req: Message, Resp: Message> {
     Drop,
@@ -315,7 +317,12 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                 SenderMsg::Drop => return false,
                 SenderMsg::Message(msg) => {
                     let data = serde_json::to_string(&msg).unwrap();
-                    log::debug!("Sending: {}", data);
+                    if data.len() < MAX_LOG_CHARS {
+                        log::debug!("Sending: {}", data);
+                    } else {
+                        let x: String = data.chars().take(MAX_LOG_CHARS).collect();
+                        log::debug!("Sending: {} ...", x);
+                    }
                     if let Err(_) = write.send(tungstenite::Message::Text(data)).await {
                         return false;
                     }
@@ -326,7 +333,12 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
     }
 
     async fn handle_text_message(&self, text: &str, client_id: Uuid) -> bool {
-        debug!("Message received: `{}`", text);
+        if text.len() < MAX_LOG_CHARS {
+            log::debug!("Message received: {}", text);
+        } else {
+            let x: String = text.chars().take(MAX_LOG_CHARS).collect();
+            log::debug!("Message received: {} ...", x);
+        }
         match serde_json::from_str::<Request<JsonValue>>(&text) {
             Ok(msg) => {
                 // we drop in case the receiver of the requests drops
