@@ -83,7 +83,7 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
                 id: uuid,
                 server: self.server.clone(),
                 direct: Some(tx),
-                sender: None
+                sender: None,
             },
         };
         let broadcast = Response::Request {
@@ -91,7 +91,8 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
             message: request,
         };
 
-        self.server.broadcast_internal(SenderMsg::Message(broadcast));
+        self.server
+            .broadcast_internal(SenderMsg::Message(broadcast));
 
         // TODO: shutdown server in case this channel breaks
         let _ = self.server.dispatch_request(req).await;

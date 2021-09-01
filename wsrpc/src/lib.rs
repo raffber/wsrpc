@@ -16,7 +16,7 @@ pub struct Request<M: Message> {
     id: Uuid,
     message: M,
     #[serde(skip)]
-    sender: Option<Uuid>
+    sender: Option<Uuid>,
 }
 
 impl<M: Message> Request<M> {
@@ -24,7 +24,7 @@ impl<M: Message> Request<M> {
         Request {
             id: Uuid::new_v4(),
             message: msg,
-            sender
+            sender,
         }
     }
 }
@@ -35,10 +35,16 @@ pub enum Response<Req: Message, Resp: Message> {
         request: Uuid,
         message: Resp,
         #[serde(skip)]
-        sender: Option<Uuid>
+        sender: Option<Uuid>,
     },
     Notify(Resp),
     Error(String),
-    Request { id: Uuid, message: Req },
-    InvalidRequest { id: Uuid, description: String },
+    Request {
+        id: Uuid,
+        message: Req,
+    },
+    InvalidRequest {
+        id: Uuid,
+        description: String,
+    },
 }

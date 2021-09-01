@@ -3,20 +3,21 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::RwLock;
 
+use async_tungstenite::tokio::{accept_async, TokioAdapter};
+use async_tungstenite::tungstenite::{Error as WsError, Message as WsMessage};
+use async_tungstenite::WebSocketStream;
 use futures::stream::SplitSink;
 use futures::SinkExt;
 use log::{debug, info};
 use serde::de::DeserializeOwned;
 use tokio::net::ToSocketAddrs;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::stream::StreamExt;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::task;
 use tokio::time;
 use tokio::time::Duration;
-use tokio_tungstenite::accept_async;
-use tokio_tungstenite::WebSocketStream;
+use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 use crate::http::HttpServer;
@@ -296,21 +297,18 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
 
     async fn write(
         &self,
-        write: &mut SplitSink<WebSocketStream<TcpStream>, tungstenite::Message>,
+        write: &mut SplitSink<WebSocketStream<TokioAdapter<TcpStream>>, WsMessage>,
         msg: Merged<Req, Resp>,
     ) -> bool {
         match msg {
             Merged::Interval => {
-                if let Err(_) = write
-                    .send(tungstenite::Message::Ping(vec![1, 2, 3, 4]))
-                    .await
-                {
+                if let Err(_) = write.send(WsMessage::Ping(vec![1, 2, 3, 4])).await {
                     return false;
                 }
             }
             Merged::Msg(x) => match x {
                 SenderMsg::Pong(x) => {
-                    if let Err(_) = write.send(tungstenite::Message::Pong(x)).await {
+                    if let Err(_) = write.send(WsMessage::Pong(x)).await {
                         return false;
                     }
                 }
@@ -323,7 +321,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                         let x: String = data.chars().take(MAX_LOG_CHARS).collect();
                         log::debug!("Sending: {} ...", x);
                     }
-                    if let Err(_) = write.send(tungstenite::Message::Text(data)).await {
+                    if let Err(_) = write.send(WsMessage::Text(data)).await {
                         return false;
                     }
                 }
@@ -375,14 +373,14 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
     async fn handle_rx(
         &self,
         client_id: Uuid,
-        msg: Result<tungstenite::Message, tungstenite::Error>,
+        msg: Result<WsMessage, WsError>,
         tx_resp: &UnboundedSender<SenderMsg<Req, Resp>>,
     ) -> bool {
         match msg {
             Ok(msg) => match msg {
-                tungstenite::Message::Text(text) => self.handle_text_message(&text, client_id).await,
-                tungstenite::Message::Ping(data) => tx_resp.send(SenderMsg::Pong(data)).is_ok(),
-                tungstenite::Message::Close(_) => false,
+                WsMessage::Text(text) => self.handle_text_message(&text, client_id).await,
+                WsMessage::Ping(data) => tx_resp.send(SenderMsg::Pong(data)).is_ok(),
+                WsMessage::Close(_) => false,
                 _ => true,
             },
             Err(_) => false,

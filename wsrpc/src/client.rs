@@ -1,6 +1,9 @@
 use std::io;
 use std::time::{Duration, Instant};
 
+use async_tungstenite::tokio::{connect_async, TokioAdapter};
+use async_tungstenite::tungstenite::Message as WsMessage;
+use async_tungstenite::WebSocketStream;
 use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
 use serde::de::DeserializeOwned;
@@ -10,15 +13,14 @@ use tokio::net::TcpStream;
 use tokio::sync::broadcast::{channel as bc_channel, Receiver as BcReceiver, Sender as BcSender};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::task;
-use tokio::time::delay_for;
+use tokio::time::sleep;
 use tokio::time::timeout;
-use tokio_tungstenite::{connect_async, WebSocketStream};
 use url::Url;
 use uuid::Uuid;
 
 use crate::{Message, Request, Response};
 
-type WsStream = WebSocketStream<TcpStream>;
+type WsStream = WebSocketStream<TokioAdapter<TcpStream>>;
 
 const BC_CHANNEL_SIZE: usize = 1000;
 
@@ -74,7 +76,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
             if start.elapsed().as_secs_f32() > duration.as_secs_f32() {
                 break;
             }
-            delay_for(Duration::from_millis(10)).await;
+            sleep(Duration::from_millis(10)).await;
         }
         Err(io::Error::new(
             ErrorKind::TimedOut,
@@ -153,7 +155,9 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
         task::spawn(async move {
             while let Ok(req) = rx_bc.recv().await {
                 match req {
-                    Response::Reply { request, message, .. } => {
+                    Response::Reply {
+                        request, message, ..
+                    } => {
                         if tx.send((message, request)).is_err() {
                             break;
                         }
@@ -170,7 +174,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
         let msg = Request {
             id: id.clone(),
             message: msg,
-            sender: None
+            sender: None,
         };
         let msg = SenderMsg::Message(msg);
         self.tx.send(msg).ok().map(|_| id)
@@ -205,19 +209,19 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
         while let Some(msg) = read.next().await {
             match msg {
                 Ok(msg) => match msg {
-                    tungstenite::Message::Text(text) => {
+                    WsMessage::Text(text) => {
                         if let Ok(resp) = serde_json::from_str::<Response<Req, Resp>>(&text) {
                             if tx.send(resp).is_err() {
                                 break;
                             }
                         }
                     }
-                    tungstenite::Message::Ping(data) => {
+                    WsMessage::Ping(data) => {
                         if self.tx.send(SenderMsg::Pong(data)).is_err() {
                             break;
                         }
                     }
-                    tungstenite::Message::Close(_) => {
+                    WsMessage::Close(_) => {
                         let _ = self.tx.send(SenderMsg::Drop);
                         break;
                     }
@@ -231,7 +235,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
 
     async fn sender(
         self,
-        mut write: SplitSink<WsStream, tungstenite::Message>,
+        mut write: SplitSink<WsStream, WsMessage>,
         mut rx: UnboundedReceiver<SenderMsg<Req>>,
     ) {
         while let Some(req) = rx.recv().await {
@@ -241,7 +245,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
                     break;
                 }
                 SenderMsg::Pong(data) => {
-                    let msg = tungstenite::Message::Pong(data);
+                    let msg = WsMessage::Pong(data);
                     if write.send(msg).await.is_err() {
                         break;
                     }
@@ -249,7 +253,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
                 SenderMsg::Message(msg) => {
                     let data = serde_json::to_string(&msg).unwrap();
                     log::debug!("Sending: {}", data);
-                    let msg = tungstenite::Message::Text(data);
+                    let msg = WsMessage::Text(data);
                     if write.send(msg).await.is_err() {
                         break;
                     }
