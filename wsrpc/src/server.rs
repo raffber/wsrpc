@@ -259,7 +259,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         self,
         id: Uuid,
         stream: TcpStream,
-        rx_resp: UnboundedReceiver<SenderMsg<Req, Resp>>,
+        mut rx_resp: UnboundedReceiver<SenderMsg<Req, Resp>>,
         tx_resp: UnboundedSender<SenderMsg<Req, Resp>>,
     ) {
         let _ = stream.set_nodelay(true);
@@ -271,14 +271,23 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         let (mut write, mut read) = futures::StreamExt::split(ws_stream);
         let server = self.clone();
         task::spawn(async move {
-            let interval = time::interval(Duration::from_millis(500)).map(|_| Merged::Interval);
-            let rx = rx_resp.map(Merged::Msg);
-            let mut merged = interval.merge(rx);
-            while let Some(msg) = merged.next().await {
-                if !server.write(&mut write, msg).await {
-                    break;
+            let mut interval = time::interval(Duration::from_millis(500));
+
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        if write.send(WsMessage::Ping(vec![1, 2, 3, 4])).await.is_err() {
+                            break;
+                        }
+                    }
+                    msg = rx_resp.recv() => {
+                        if !server.write(&mut write, msg).await {
+                            break;
+                        }
+                    }
                 }
             }
+
             server.remove_client(&id);
             let _ = write.close().await;
             debug!("Dropping sender of client: {}", id);
@@ -298,36 +307,25 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
     async fn write(
         &self,
         write: &mut SplitSink<WebSocketStream<TokioAdapter<TcpStream>>, WsMessage>,
-        msg: Merged<Req, Resp>,
+        msg: Option<SenderMsg<Req, Resp>>,
     ) -> bool {
         match msg {
-            Merged::Interval => {
-                if let Err(_) = write.send(WsMessage::Ping(vec![1, 2, 3, 4])).await {
-                    return false;
-                }
+            Some(SenderMsg::Pong(x)) => {
+                write.send(WsMessage::Pong(x)).await.is_ok()
             }
-            Merged::Msg(x) => match x {
-                SenderMsg::Pong(x) => {
-                    if let Err(_) = write.send(WsMessage::Pong(x)).await {
-                        return false;
-                    }
+            Some(SenderMsg::Drop) => false,
+            Some(SenderMsg::Message(msg)) => {
+                let data = serde_json::to_string(&msg).unwrap();
+                if data.len() < MAX_LOG_CHARS {
+                    log::debug!("Sending: {}", data);
+                } else {
+                    let x: String = data.chars().take(MAX_LOG_CHARS).collect();
+                    log::debug!("Sending: {} ...", x);
                 }
-                SenderMsg::Drop => return false,
-                SenderMsg::Message(msg) => {
-                    let data = serde_json::to_string(&msg).unwrap();
-                    if data.len() < MAX_LOG_CHARS {
-                        log::debug!("Sending: {}", data);
-                    } else {
-                        let x: String = data.chars().take(MAX_LOG_CHARS).collect();
-                        log::debug!("Sending: {} ...", x);
-                    }
-                    if let Err(_) = write.send(WsMessage::Text(data)).await {
-                        return false;
-                    }
-                }
-            },
+                write.send(WsMessage::Text(data)).await.is_ok()
+            }
+            None => false
         }
-        true
     }
 
     async fn handle_text_message(&self, text: &str, client_id: Uuid) -> bool {
@@ -407,7 +405,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                 sender: msg.sender,
             },
         })
-        .await
+            .await
     }
 
     async fn send(&self, id: &Uuid, msg: Response<Req, Resp>) {
