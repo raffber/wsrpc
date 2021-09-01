@@ -14,7 +14,7 @@ uuid = { version = "0.8", features = ["serde", "v4"] }
 url = "2"
 env_logger = "0.9"
 thiserror = "1"
-hyper = { version = "0.14.12", features = ["server"] }
+hyper = { version = "0.14.12", features = ["server", "http1", "http2", "tcp"] }
 tokio-stream = "0.1.7"
 
 [dependencies.serde]
