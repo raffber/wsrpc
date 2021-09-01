@@ -310,9 +310,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         msg: Option<SenderMsg<Req, Resp>>,
     ) -> bool {
         match msg {
-            Some(SenderMsg::Pong(x)) => {
-                write.send(WsMessage::Pong(x)).await.is_ok()
-            }
+            Some(SenderMsg::Pong(x)) => write.send(WsMessage::Pong(x)).await.is_ok(),
             Some(SenderMsg::Drop) => false,
             Some(SenderMsg::Message(msg)) => {
                 let data = serde_json::to_string(&msg).unwrap();
@@ -324,7 +322,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                 }
                 write.send(WsMessage::Text(data)).await.is_ok()
             }
-            None => false
+            None => false,
         }
     }
 
@@ -405,7 +403,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                 sender: msg.sender,
             },
         })
-            .await
+        .await
     }
 
     async fn send(&self, id: &Uuid, msg: Response<Req, Resp>) {
