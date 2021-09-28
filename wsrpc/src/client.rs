@@ -104,7 +104,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
         self.tx_bc.subscribe()
     }
 
-    pub fn broadcasts(&self) -> UnboundedReceiver<Resp> {
+    pub fn notifications(&self) -> UnboundedReceiver<Resp> {
         let mut rx_bc = self.tx_bc.subscribe();
         let (tx, rx) = unbounded_channel();
         task::spawn(async move {
