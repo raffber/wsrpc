@@ -109,7 +109,10 @@ class Client(object):
 
     async def _rx_loop(self):
         while True:
-            msg = await self._ws.recv()
+            try:
+                msg = await self._ws.recv()
+            except Exception:
+                break;
             try:
                 if isinstance(msg, bytes):
                     msg = msgpack.unpackb(msg)
