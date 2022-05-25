@@ -214,6 +214,7 @@ Client<Req, Resp>
                 Ok(msg) => match msg {
                     WsMessage::Text(text) => {
                         if let Ok(resp) = serde_json::from_str::<Response<Req, Resp>>(&text) {
+                            log::debug!("Received: {}", text);
                             let _ = tx.send(resp).is_err();
                         }
                     }
