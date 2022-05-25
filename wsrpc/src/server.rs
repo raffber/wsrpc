@@ -89,6 +89,10 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Reply<R
         };
         self.server.broadcast_internal(SenderMsg::Message(resp));
     }
+
+    pub fn request_id(&self) -> Uuid {
+        self.id
+    }
 }
 
 pub struct Requested<Req: Message, Resp: Message> {
@@ -107,6 +111,10 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Request
 
     pub fn split(self) -> (Req, Reply<Req, Resp>) {
         (self.msg, self.reply)
+    }
+
+    pub fn request_id(self) -> Uuid {
+        self.reply.id
     }
 }
 
@@ -403,7 +411,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                 sender: msg.sender,
             },
         })
-        .await
+            .await
     }
 
     async fn send(&self, id: &Uuid, msg: Response<Req, Resp>) {
