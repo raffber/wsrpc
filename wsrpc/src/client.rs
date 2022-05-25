@@ -52,11 +52,11 @@ pub struct Client<Req: Message, Resp: Message> {
 }
 
 impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + DeserializeOwned>
-    Client<Req, Resp>
+Client<Req, Resp>
 {
     pub async fn connect<A>(url: A, duration: Duration) -> io::Result<Self>
-    where
-        A: Into<Url>,
+        where
+            A: Into<Url>,
     {
         let start = Instant::now();
         let url = url.into();
@@ -181,6 +181,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
     }
 
     pub fn disconnect(self) {
+        log::debug!("Disconnecting sender");
         let _ = self.tx.send(SenderMsg::Drop);
     }
 
@@ -192,8 +193,10 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
                     return Ok(reply);
                 }
             }
+            log::error!("Receiver hung up!");
             Err(ClientError::ReceiverHungUp)
         } else {
+            log::error!("Sender hung up!");
             Err(ClientError::SenderHungUp)
         }
     }
@@ -211,25 +214,26 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
                 Ok(msg) => match msg {
                     WsMessage::Text(text) => {
                         if let Ok(resp) = serde_json::from_str::<Response<Req, Resp>>(&text) {
-                            if tx.send(resp).is_err() {
-                                break;
-                            }
+                            let _ = tx.send(resp).is_err();
                         }
                     }
                     WsMessage::Ping(data) => {
-                        if self.tx.send(SenderMsg::Pong(data)).is_err() {
-                            break;
-                        }
+                        let _ = self.tx.send(SenderMsg::Pong(data)).is_err();
                     }
                     WsMessage::Close(_) => {
                         let _ = self.tx.send(SenderMsg::Drop);
+                        log::debug!("Closing websocket connection by remote");
                         break;
                     }
                     _ => {}
                 },
-                Err(_) => break,
+                Err(x) => {
+                    log::error!("Websocket error occurred: {}", x);
+                    break;
+                }
             }
         }
+        log::debug!("Receiver quitting. Dropping sender.");
         let _ = self.tx.send(SenderMsg::Drop);
     }
 
@@ -242,6 +246,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
             match req {
                 SenderMsg::Drop => {
                     let _ = write.close().await;
+                    log::debug!("Sender received drop. Quitting.");
                     break;
                 }
                 SenderMsg::Pong(data) => {
@@ -260,5 +265,6 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
                 }
             }
         }
+        log::debug!("Sender quitting.")
     }
 }
