@@ -1,1 +1,5 @@
 wsrpc/target/
+venv
+__pycache__
+*.egg-info
+build
