@@ -72,6 +72,7 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
         let request: Req = match serde_json::from_str(&data) {
             Ok(x) => x,
             Err(err) => {
+                log::error!("Error deserializing message: {}", data);
                 return Self::respond_error("Cannot deserialize body", err);
             }
         };
