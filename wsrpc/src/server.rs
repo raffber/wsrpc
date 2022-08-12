@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_tungstenite::tokio::{accept_async, TokioAdapter};
 use async_tungstenite::tungstenite::{Error as WsError, Message as WsMessage};
@@ -38,12 +39,12 @@ struct ServerShared<Req: Message, Resp: Message> {
     connections: HashMap<Uuid, UnboundedSender<SenderMsg<Req, Resp>>>,
     abort_handles: Vec<oneshot::Sender<()>>,
     tx_req: Option<UnboundedSender<Requested<Req, Resp>>>,
-    broadcast_reqrep: bool,
 }
 
 #[derive(Clone)]
 pub struct Server<Req: Message, Resp: Message> {
     inner: Arc<RwLock<ServerShared<Req, Resp>>>,
+    broadcast_reqrep: Arc<AtomicBool>,
 }
 
 pub struct Reply<Req: Message, Resp: Message> {
@@ -55,7 +56,7 @@ pub struct Reply<Req: Message, Resp: Message> {
 
 impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Reply<Req, Resp> {
     pub fn answer(self, resp: Resp) {
-        let broadcast = { self.server.inner.read().unwrap().broadcast_reqrep };
+        let broadcast = self.server.broadcast_reqrep.load(Ordering::SeqCst);
         if broadcast {
             self.answer_broadcast(resp);
         } else {
@@ -158,17 +159,16 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
             connections: Default::default(),
             abort_handles: vec![],
             tx_req: Some(tx_req),
-            broadcast_reqrep: false,
         };
         let server = Self {
             inner: Arc::new(RwLock::new(inner)),
+            broadcast_reqrep: Arc::new(AtomicBool::new(false)),
         };
         (server, rx_req)
     }
 
     pub fn enable_broadcast_reqrep(&self, enable_reqrep: bool) {
-        let mut write = self.inner.write().unwrap();
-        write.broadcast_reqrep = enable_reqrep;
+        self.broadcast_reqrep.store(enable_reqrep, Ordering::SeqCst);
     }
 
     pub async fn listen_ws<A: ToSocketAddrs>(&self, addr: A) {
@@ -398,7 +398,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
             id: msg.id,
             message: msg.message.clone(),
         };
-        let bc = { self.inner.read().unwrap().broadcast_reqrep };
+        let bc = { self.broadcast_reqrep.load(Ordering::SeqCst) };
         if bc {
             server.broadcast_internal(SenderMsg::Message(broadcast));
         }
