@@ -92,14 +92,16 @@ class Client(object):
         self._ws = None
         self._receivers = {}
 
-    async def connect(self, url):
+    async def connect(self, url, **kw):
         """
         Connect to a remote server.
         Spawns a new task handling incoming messages.
+
+        :param **kw: keyword arguments passed to `websockets.connect()`
         """
         if self._ws is not None:
             return
-        self._ws = await connect(url)
+        self._ws = await connect(url, **kw)
         asyncio.create_task(self._rx_loop())
         return self
 

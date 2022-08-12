@@ -34,12 +34,14 @@ class Server(object):
         self._server = None
         self._handler = handler
 
-    async def run(self, socketaddr: str, port: int):
+    async def run(self, socketaddr: str, port: int, **kw):
         """
         Creates a websocket server on the given address, listening on the given port.
         This function will only return, once the server has terminated.
+
+        :param **kw: keyword arguments passed to `websockets.serve()`
         """
-        self._server = await serve(self._connection_handler, socketaddr, port)
+        self._server = await serve(self._connection_handler, socketaddr, port, **kw)
         await self._server.wait_closed()
 
     async def broadcast(self, msg):
