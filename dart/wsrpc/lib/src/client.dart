@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show WebSocket;
 import 'dart:html' show HttpRequest;
@@ -59,10 +60,20 @@ class WsRpc extends Rpc {
   }
 }
 
+class Receiver {
+  StreamController controller = StreamController();
+}
+
 class Client {
   WebSocket ws;
+  Set<Receiver> receivers = {};
+  late Future<void> listenTask = _listen(ws, receivers);
 
   Client(this.ws);
+
+  static Future<void> _listen(WebSocket ws, Set<Receiver> receivers) async {
+    await for (final msg in ws) {}
+  }
 
   void sendRequest(Json request, {UuidValue? id}) {
     String strid;
