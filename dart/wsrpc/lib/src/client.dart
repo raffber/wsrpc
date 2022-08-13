@@ -6,10 +6,10 @@ import 'package:async/async.dart' show CancelableOperation;
 
 import 'package:uuid/uuid.dart';
 
-typedef Json = Map<String, dynamic>;
+typedef JsonObject = Map<String, dynamic>;
 
 abstract class Rpc {
-  Future<Json> request(Json data);
+  Future<JsonObject> request(JsonObject data);
 }
 
 class RpcException implements Exception {
@@ -25,7 +25,7 @@ class HttpRpc extends Rpc {
       : _timeout = timeout ?? Duration(seconds: 1);
 
   @override
-  Future<Json> request(Json data) async {
+  Future<JsonObject> request(JsonObject data) async {
     final response = await HttpRequest.request(url,
             method: 'GET', sendData: jsonEncode(data), responseType: "json")
         .timeout(_timeout);
@@ -55,17 +55,19 @@ class WsRpc extends Rpc {
   }
 
   @override
-  Future<Json> request(Json data) async {
+  Future<JsonObject> request(JsonObject data) async {
     final client = await connect();
     return await client.request(data, _timeout);
   }
 }
 
 class Receiver<T> {
-  StreamController<T> stream = StreamController();
+  final _stream = StreamController<T>();
   Client client;
 
   Receiver(this.client);
+
+  Stream<T> get stream => _stream.stream;
 
   void close() {
     client.receivers.remove(this);
@@ -74,7 +76,7 @@ class Receiver<T> {
 
 class Client {
   WebSocket ws;
-  Set<Receiver> receivers = {};
+  Set<Receiver<JsonObject>> receivers = {};
   late final listenTask =
       CancelableOperation.fromFuture(_rxLoop(ws, receivers));
 
@@ -82,8 +84,15 @@ class Client {
 
   static Future<void> _rxLoop(WebSocket ws, Set<Receiver> receivers) async {
     await for (final msg in ws) {
-      for (final rx in receivers) {
-        rx.stream.add(msg);
+      if (msg is String) {
+        try {
+          final parsedMsg = jsonDecode(msg);
+          for (final rx in receivers) {
+            rx._stream.add(parsedMsg);
+          }
+        } on FormatException {
+          continue;
+        }
       }
     }
     await ws.close();
@@ -93,17 +102,17 @@ class Client {
     listenTask.cancel();
   }
 
-  void listen(void Function(Receiver) cb) {
-    final rx = Receiver(this);
+  Future<S> listen<S>(Future<S> Function(Receiver<JsonObject>) cb) async {
+    final rx = Receiver<JsonObject>(this);
     receivers.add(rx);
     try {
-      cb(rx);
+      return await cb(rx);
     } finally {
       rx.close();
     }
   }
 
-  void sendRequest(Json request, {UuidValue? id}) {
+  void sendRequest(JsonObject request, {UuidValue? id}) {
     String strid;
     if (id == null) {
       strid = Uuid().v4();
@@ -114,9 +123,38 @@ class Client {
     ws.add(msg);
   }
 
-  Future<Json> request(Json request, Duration timeout, {UuidValue? id}) async {
-    sendRequest(request, id: id);
+  Stream<JsonObject> notifications() {
+    final rx = Receiver<JsonObject>(this);
+    receivers.add(rx);
+    return rx.stream
+        .where((event) => event.containsKey("Notify"))
+        .map((event) => event["Notify"]);
+  }
 
-    return {};
+  Stream<JsonObject> replies() {
+    final rx = Receiver<JsonObject>(this);
+    receivers.add(rx);
+    return rx.stream
+        .where((event) => event.containsKey("Reply"))
+        .map((event) => event["Reply"]);
+  }
+
+  Future<JsonObject> request(JsonObject request, Duration timeout,
+      {UuidValue? id}) async {
+    return await listen((rx) async {
+      sendRequest(request, id: id);
+      final strid = id.toString();
+      await for (final msg in rx.stream) {
+        if (!msg.containsKey("Reply")) {
+          continue;
+        }
+        var response = msg["Reply"] as JsonObject;
+        if (response["request"] == strid) {
+          return response["message"];
+        }
+        break;
+      }
+      return {};
+    }).timeout(timeout);
   }
 }
