@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show WebSocket;
 import 'dart:html' show HttpRequest;
+import 'package:async/async.dart' show CancelableOperation;
 
 import 'package:uuid/uuid.dart';
 
@@ -60,19 +61,46 @@ class WsRpc extends Rpc {
   }
 }
 
-class Receiver {
-  StreamController controller = StreamController();
+class Receiver<T> {
+  StreamController<T> stream = StreamController();
+  Client client;
+
+  Receiver(this.client);
+
+  void close() {
+    client.receivers.remove(this);
+  }
 }
 
 class Client {
   WebSocket ws;
   Set<Receiver> receivers = {};
-  late Future<void> listenTask = _listen(ws, receivers);
+  late final listenTask =
+      CancelableOperation.fromFuture(_rxLoop(ws, receivers));
 
   Client(this.ws);
 
-  static Future<void> _listen(WebSocket ws, Set<Receiver> receivers) async {
-    await for (final msg in ws) {}
+  static Future<void> _rxLoop(WebSocket ws, Set<Receiver> receivers) async {
+    await for (final msg in ws) {
+      for (final rx in receivers) {
+        rx.stream.add(msg);
+      }
+    }
+    await ws.close();
+  }
+
+  void close() {
+    listenTask.cancel();
+  }
+
+  void listen(void Function(Receiver) cb) {
+    final rx = Receiver(this);
+    receivers.add(rx);
+    try {
+      cb(rx);
+    } finally {
+      rx.close();
+    }
   }
 
   void sendRequest(Json request, {UuidValue? id}) {
@@ -88,6 +116,7 @@ class Client {
 
   Future<Json> request(Json request, Duration timeout, {UuidValue? id}) async {
     sendRequest(request, id: id);
+
     return {};
   }
 }
