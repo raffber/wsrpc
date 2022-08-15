@@ -15,6 +15,10 @@ class Quit(Exception):
 
 
 class InvalidRequest(Exception):
+    """
+    This exception may be raised in the request handler functionpassed with `Server(handler)`.
+    It should be used in the case the request was invalid.
+    """
     def __init__(self, message: str) -> None:
         self._message = message
         super().__init__(message)
