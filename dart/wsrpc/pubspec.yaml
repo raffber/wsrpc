@@ -1,7 +1,7 @@
 name: wsrpc
-description: A starting point for Dart libraries or applications.
+description: An wsrpc client implementation
 version: 1.0.0
-# homepage: https://www.example.com
+homepage: https://github.com/raffber/wsrpc
 
 environment:
   sdk: '>=2.17.0 <3.0.0'

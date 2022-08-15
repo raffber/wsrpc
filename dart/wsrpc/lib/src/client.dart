@@ -6,15 +6,23 @@ import 'package:uuid/uuid.dart';
 
 typedef JsonObject = Map<String, dynamic>;
 
+/// Abstract interface to perform RPC request-response calls
 abstract class Rpc {
-  Future<JsonObject> request(JsonObject data);
+  /// Perform a request and wait for the response. If `timeout` is not
+  /// given a default timeout shall be applied.
+  Future<JsonObject> request(JsonObject data, {Duration? timeout});
+
+  /// Close the connection to the remote server, if applicable
+  Future<void> close() async {}
 }
 
+/// Exception thrown in case an exception occurs on the RPC layer
 class RpcException implements Exception {
   String message;
   RpcException(this.message);
 }
 
+/// RPC interface implementation using HTTP to connect to the server
 class HttpRpc extends Rpc {
   String url;
   final Duration _timeout;
@@ -23,13 +31,13 @@ class HttpRpc extends Rpc {
       : _timeout = timeout ?? Duration(seconds: 1);
 
   @override
-  Future<JsonObject> request(JsonObject data) async {
+  Future<JsonObject> request(JsonObject data, {Duration? timeout}) async {
     final client = HttpClient();
     final request = await client.postUrl(Uri.parse(url));
     request.headers.contentType =
         ContentType('application', 'json', charset: 'utf-8');
     request.write(jsonEncode(data));
-    final response = await request.done.timeout(_timeout);
+    final response = await request.done.timeout(timeout ?? _timeout);
 
     if (response.statusCode != 200) {
       throw RpcException(
@@ -40,6 +48,7 @@ class HttpRpc extends Rpc {
   }
 }
 
+/// RPC interface implementation using websockets to connect to the server
 class WsRpc extends Rpc {
   String url;
   Client? _client;
@@ -47,6 +56,7 @@ class WsRpc extends Rpc {
 
   WsRpc(this.url, {Duration? timeout})
       : _timeout = timeout ?? Duration(seconds: 1);
+
   Future<Client> connect() async {
     if (_client != null) {
       return _client!;
@@ -56,9 +66,16 @@ class WsRpc extends Rpc {
   }
 
   @override
-  Future<JsonObject> request(JsonObject data) async {
+  Future<JsonObject> request(JsonObject data, {Duration? timeout}) async {
     final client = await connect();
-    return await client.request(data, _timeout);
+    return await client.request(data, timeout ?? _timeout);
+  }
+
+  @override
+  Future<void> close() async {
+    if (_client != null) {
+      await _client!.close();
+    }
   }
 }
 
@@ -75,11 +92,20 @@ class Receiver<T> {
   }
 }
 
+/// A websocket RPC client to connect to a websocket wsrpc server.
+///
+/// To create an instance of this class, an already connected `WebSocket`
+/// instance needs to be passed.
+///
+/// Make sure to close the websocket connection by calling `Client.close()`.
 class Client {
   WebSocket ws;
   Set<Receiver<JsonObject>> receivers = {};
   late final listenTask = Completer();
 
+  /// Create a new `Client` instance with an **already** connected `WebSocket`.
+  /// This will automatically spawn a receiver loop to listen to messages
+  /// on the websocket connection.
   Client(this.ws) {
     listenTask.complete(_rxLoop(ws, receivers));
   }
@@ -99,21 +125,34 @@ class Client {
     }
   }
 
+  /// Close the underlying websocket connection. Afterwards, this client
+  /// cannot be used anymore.
   Future<void> close() async {
     await ws.close();
     await listenTask.future;
   }
 
-  Future<S> listen<S>(Future<S> Function(Receiver<JsonObject>) cb) async {
+  /// Registers a receiver and start listen to messages on the message bus.
+  /// When the internal callback returns, the receiver is automatically unregistered.
+  ///
+  ///   await client.listen((stream) async {
+  ///     // do something with `stream`
+  ///     async for (message in stream) {
+  ///       // do something with `message`
+  ///     }
+  ///   })
+  Future<S> listen<S>(Future<S> Function(Stream<JsonObject>) cb) async {
     final rx = Receiver<JsonObject>(this);
     receivers.add(rx);
     try {
-      return await cb(rx);
+      return await cb(rx._stream.stream);
     } finally {
       rx.close();
     }
   }
 
+  /// Send a request message to the bus, optionally a request-id can
+  /// be provided, such that corresponding responses could be tracked.
   void sendRequest(JsonObject request, {UuidValue? id}) {
     if (ws.readyState != WebSocket.open) {
       throw StateError("Client has already been closed.");
@@ -128,28 +167,7 @@ class Client {
     ws.add(msg);
   }
 
-  Stream<JsonObject> notifications() {
-    if (ws.readyState != WebSocket.open) {
-      throw StateError("Client has already been closed.");
-    }
-    final rx = Receiver<JsonObject>(this);
-    receivers.add(rx);
-    return rx.stream
-        .where((event) => event.containsKey("Notify"))
-        .map((event) => event["Notify"]);
-  }
-
-  Stream<JsonObject> replies() {
-    if (ws.readyState != WebSocket.open) {
-      throw StateError("Client has already been closed.");
-    }
-    final rx = Receiver<JsonObject>(this);
-    receivers.add(rx);
-    return rx.stream
-        .where((event) => event.containsKey("Reply"))
-        .map((event) => event["Reply"]);
-  }
-
+  /// Send a request to the bus and wait for an answer up the given timeout.
   Future<JsonObject> request(JsonObject request, Duration timeout,
       {UuidValue? id}) async {
     if (ws.readyState != WebSocket.open) {
@@ -159,17 +177,20 @@ class Client {
       final id = Uuid().v4obj();
       sendRequest(request, id: id);
       final strid = id.toString();
-      await for (final msg in rx.stream) {
-        if (!msg.containsKey("Reply")) {
-          continue;
+      await for (final msg in rx) {
+        if (msg.containsKey("Reply")) {
+          var response = msg["Reply"] as JsonObject;
+          if (response["request"] == strid) {
+            return response["message"];
+          }
+        } else if (msg.containsKey("InvalidRequest")) {
+          var response = msg["InvalidRequest"] as JsonObject;
+          if (response["id"] == strid) {
+            final description = response["description"] as String;
+            throw RpcException("Server reject request: $description");
+          }
         }
-        var response = msg["Reply"] as JsonObject;
-        if (response["request"] == strid) {
-          return response["message"];
-        }
-        break;
       }
-      return {};
     }).timeout(timeout);
   }
 }
