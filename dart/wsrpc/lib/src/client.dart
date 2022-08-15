@@ -22,6 +22,13 @@ class RpcException implements Exception {
   RpcException(this.message);
 }
 
+/// Exception thrown in case an invalid request was sent to the bus
+/// and the server rejected it
+class InvalidRequest implements Exception {
+  String message;
+  InvalidRequest(this.message);
+}
+
 /// RPC interface implementation using HTTP to connect to the server
 class HttpRpc extends Rpc {
   String url;
@@ -168,6 +175,7 @@ class Client {
   }
 
   /// Send a request to the bus and wait for an answer up the given timeout.
+  /// Throws an `InvalidRequest` in case the server rejected the request
   Future<JsonObject> request(JsonObject request, Duration timeout,
       {UuidValue? id}) async {
     if (ws.readyState != WebSocket.open) {
@@ -187,7 +195,9 @@ class Client {
           var response = msg["InvalidRequest"] as JsonObject;
           if (response["id"] == strid) {
             final description = response["description"] as String;
-            throw RpcException("Server reject request: $description");
+            final req = jsonEncode(request);
+            throw InvalidRequest(
+                "Server reject request: $description. Request was: $req");
           }
         }
       }

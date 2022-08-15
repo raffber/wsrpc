@@ -14,6 +14,16 @@ class Quit(Exception):
     pass
 
 
+class InvalidRequest(Exception):
+    def __init__(self, message: str) -> None:
+        self._message = message
+        super().__init__(message)
+
+    @property
+    def message(self):
+        return self._message
+
+
 REQUEST_SCHEMA = {
     "type": "object",
     "id": {"type": "string"},
@@ -60,6 +70,13 @@ class Server(object):
         Answer a previous request.
         """
         msg = {'Reply': {'request': id, 'message': msg}}
+        connected = list(self._connected.keys())
+        msg = json.dumps(msg)
+        for con in connected:
+            await con.send(msg)
+
+    async def send_invalid_request(self, id, msg):
+        msg = {'InvalidRequest': {'id': id, 'description': msg}}
         connected = list(self._connected.keys())
         msg = json.dumps(msg)
         for con in connected:
@@ -159,9 +176,13 @@ class Connection(object):
             return
         # call back into the application
         handler = self._server.handler
-        if iscoroutinefunction(handler):
-            reply = await handler(self._server, msg['message'])
-        else:
-            reply = handler(self._server, msg['message'])
+        try:
+            if iscoroutinefunction(handler):
+                reply = await handler(self._server, msg['message'])
+            else:
+                reply = handler(self._server, msg['message'])
+        except InvalidRequest as e:
+            await self._server.send_invalid_request(id, e.message)
+            return
         if reply is not None:
             await self._server.answer(id, reply)

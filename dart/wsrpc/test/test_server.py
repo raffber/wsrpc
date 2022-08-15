@@ -8,7 +8,7 @@ rootdir = abspath(os.path.join(curdir, '..', '..', '..'))
 
 sys.path.insert(0, rootdir)
 
-from pywsrpc.server import Server, Quit
+from pywsrpc.server import InvalidRequest, Server, Quit
 
 
 async def handler(server: Server, message: dict):
@@ -18,6 +18,8 @@ async def handler(server: Server, message: dict):
         return message
     elif message == {'Quit': None}:
         raise Quit()
+    print('Invalid request....')
+    raise InvalidRequest('Did not recognize message.')
 
 
 async def main():
