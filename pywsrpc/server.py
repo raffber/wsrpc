@@ -28,6 +28,7 @@ class Server(object):
     The server must be given a message handler, which is called for
     each incoming message. The handler may return a message, in which
     case the message is sent back onto the "bus".
+    The signature of the handler is: `def handler(Server, dict)`
     """
     def __init__(self, handler):
         self._connected = {}
