@@ -44,7 +44,7 @@ class HttpRpc extends Rpc {
     request.headers.contentType =
         ContentType('application', 'json', charset: 'utf-8');
     request.write(jsonEncode(data));
-    final response = await request.done.timeout(timeout ?? _timeout);
+    final response = await request.close().timeout(timeout ?? _timeout);
 
     if (response.statusCode != 200) {
       throw RpcException(
