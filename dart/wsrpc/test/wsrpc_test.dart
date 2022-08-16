@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:wsrpc/src/client.dart';
-import 'package:wsrpc/wsrpc.dart';
 import 'dart:io' show Directory, Process, WebSocket;
 import 'package:test/test.dart';
 import 'package:path/path.dart' show join;
@@ -9,13 +8,23 @@ import 'package:path/path.dart' show join;
 Future<String> getPython() async {
   final result = await Process.run("pipenv", ["--venv"]);
   final venvPath = (result.stdout as String).trim();
-  print(venvPath);
   return join(venvPath, "bin", "python");
 }
 
 Future<Completer> spawnPythonServer() async {
   final python = await getPython();
   final testServer = join(Directory.current.path, "test", "test_server.py");
+  final proc = Process.run(python, [testServer]);
+  final ret = Completer();
+  ret.complete(proc);
+  await Future.delayed(Duration(milliseconds: 100));
+  return ret;
+}
+
+Future<Completer> spawnHttpPythonServer() async {
+  final python = await getPython();
+  final testServer =
+      join(Directory.current.path, "test", "test_http_server.py");
   final proc = Process.run(python, [testServer]);
   final ret = Completer();
   ret.complete(proc);
@@ -53,6 +62,18 @@ void main() {
 
       client.sendRequest({'Quit': null});
       await client.close();
+      await proc.future;
+    });
+
+    test('http', () async {
+      final proc = await spawnHttpPythonServer();
+      final rpc = HttpRpc("http://127.0.0.1:7480");
+      final reply = await rpc.request({"Foo": "Bar"});
+      assert(reply['Foo'] == 'Bar');
+      try {
+        await rpc.request({'Shutdown': null});
+        // ignore: empty_catches
+      } catch (err) {}
       await proc.future;
     });
   });
