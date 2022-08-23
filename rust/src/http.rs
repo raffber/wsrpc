@@ -2,8 +2,8 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 
 use futures::FutureExt;
-use hyper::Server as HyperServer;
 use hyper::service::{make_service_fn, service_fn};
+use hyper::Server as HyperServer;
 use hyper::{Body, Request as HyperRequest, Response as HyperResponse};
 use serde::de::DeserializeOwned;
 use serde_json::json;
@@ -58,7 +58,7 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
         });
         let resp = resp.to_string();
         let body: Body = resp.as_bytes().to_vec().into();
-        return Ok(HyperResponse::builder().status(400).body(body).unwrap());
+        Ok(HyperResponse::builder().status(400).body(body).unwrap())
     }
 
     async fn handle(self, req: HyperRequest<Body>) -> Result<HyperResponse<Body>, hyper::Error> {

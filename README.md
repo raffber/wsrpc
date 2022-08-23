@@ -1,5 +1,7 @@
 # WebSocket & HTTP RPC Library
 
+[![Rust Stable](https://github.com/raffber/wsrpc/actions/workflows/ci.yml/badge.svg)](https://github.com/raffber/wsrpc/actions/workflows/ci.yml)
+
 `wsrpc` is a simple websocket RPC library.
 Note that this is not related to [json-rpc](https://en.wikipedia.org/wiki/JSON-RPC) even though it shares some similarities.
 This repository provides a rust and python based implementation.

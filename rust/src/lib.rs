@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use std::fmt::{Debug, Formatter};
+use uuid::Uuid;
 
 pub mod client;
 mod http;

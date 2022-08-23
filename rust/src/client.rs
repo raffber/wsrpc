@@ -52,26 +52,18 @@ pub struct Client<Req: Message, Resp: Message> {
 }
 
 impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + DeserializeOwned>
-Client<Req, Resp>
+    Client<Req, Resp>
 {
     pub async fn connect<A>(url: A, duration: Duration) -> io::Result<Self>
-        where
-            A: Into<Url>,
+    where
+        A: Into<Url>,
     {
         let start = Instant::now();
         let url = url.into();
 
         loop {
-            match connect_async(url.clone()).await {
-                Ok((stream, _)) => {
-                    return Ok(Self::with_stream(stream));
-                }
-                // TODO: filter by fatal errors
-                // Err(WsError::Io(x)) => {
-                //     // this is fatal
-                //     return Err(x);
-                // }
-                _ => {}
+            if let Ok((stream, _)) = connect_async(url.clone()).await {
+                return Ok(Self::with_stream(stream));
             }
             if start.elapsed().as_secs_f32() > duration.as_secs_f32() {
                 break;
@@ -109,13 +101,10 @@ Client<Req, Resp>
         let (tx, rx) = unbounded_channel();
         task::spawn(async move {
             while let Ok(req) = rx_bc.recv().await {
-                match req {
-                    Response::Notify(msg) => {
-                        if tx.send(msg).is_err() {
-                            break;
-                        }
+                if let Response::Notify(msg) = req {
+                    if tx.send(msg).is_err() {
+                        break;
                     }
-                    _ => {}
                 }
             }
         });
@@ -154,15 +143,13 @@ Client<Req, Resp>
         let (tx, rx) = unbounded_channel();
         task::spawn(async move {
             while let Ok(req) = rx_bc.recv().await {
-                match req {
-                    Response::Reply {
-                        request, message, ..
-                    } => {
-                        if tx.send((message, request)).is_err() {
-                            break;
-                        }
+                if let Response::Reply {
+                    request, message, ..
+                } = req
+                {
+                    if tx.send((message, request)).is_err() {
+                        break;
                     }
-                    _ => {}
                 }
             }
         });
@@ -172,7 +159,7 @@ Client<Req, Resp>
     pub fn send(&self, msg: Req) -> Option<Uuid> {
         let id = Uuid::new_v4();
         let msg = Request {
-            id: id.clone(),
+            id,
             message: msg,
             sender: None,
         };

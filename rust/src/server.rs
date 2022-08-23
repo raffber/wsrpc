@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_tungstenite::tokio::{accept_async, TokioAdapter};
 use async_tungstenite::tungstenite::{Error as WsError, Message as WsMessage};
@@ -69,11 +69,11 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Reply<R
             let _ = direct.send(resp.clone());
         }
         let resp = Response::Reply {
-            request: self.id.clone(),
+            request: self.id,
             message: resp,
             sender: self.sender,
         };
-        let sender = self.sender.clone();
+        let sender = self.sender;
         if let Some(sender) = sender {
             self.server.unicast(&sender, SenderMsg::Message(resp));
         }
@@ -84,7 +84,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Reply<R
             let _ = direct.send(resp.clone());
         }
         let resp = Response::Reply {
-            request: self.id.clone(),
+            request: self.id,
             message: resp,
             sender: self.sender,
         };
@@ -256,11 +256,10 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
             }
         });
 
-        let client = LoopbackClient {
+        LoopbackClient {
             rx: network_rx,
             tx: client_tx,
-        };
-        client
+        }
     }
 
     async fn run_client(
@@ -341,7 +340,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
             let x: String = text.chars().take(MAX_LOG_CHARS).collect();
             log::debug!("Message received: {} ...", x);
         }
-        match serde_json::from_str::<Request<JsonValue>>(&text) {
+        match serde_json::from_str::<Request<JsonValue>>(text) {
             Ok(msg) => {
                 // we drop in case the receiver of the requests drops
                 let content = serde_json::from_value::<Req>(msg.message);
@@ -411,13 +410,13 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
                 sender: msg.sender,
             },
         })
-            .await
+        .await
     }
 
     async fn send(&self, id: &Uuid, msg: Response<Req, Resp>) {
         let mut write = self.inner.write().unwrap();
         if let Some(con) = write.connections.get(id) {
-            if let Err(_) = con.send(SenderMsg::Message(msg)) {
+            if con.send(SenderMsg::Message(msg)).is_err() {
                 write.connections.remove(id);
             }
         }
@@ -434,7 +433,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         {
             let read = self.inner.read().unwrap();
             for (id, con) in &read.connections {
-                if let Err(_) = con.send(resp.clone()) {
+                if con.send(resp.clone()).is_err() {
                     to_remove.insert(*id);
                 }
             }
@@ -449,20 +448,20 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         {
             let read = self.inner.read().unwrap();
             if let Some(con) = read.connections.get(sender) {
-                if let Err(_) = con.send(msg) {
+                if con.send(msg).is_err() {
                     to_remove.replace(sender);
                 }
             }
         }
         if let Some(x) = to_remove {
-            self.remove_client(&x);
+            self.remove_client(x);
         }
     }
 
     pub async fn shutdown(&self) {
         info!("Closing all client connections.");
         let mut write = self.inner.write().unwrap();
-        for (_id, con) in &write.connections {
+        for con in write.connections.values() {
             let _ = con.send(SenderMsg::Drop);
         }
         write.connections.clear();
@@ -476,7 +475,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
 
     fn remove_client(&self, id: &Uuid) {
         let mut write = self.inner.write().unwrap();
-        if let Some(client) = write.connections.remove(&id) {
+        if let Some(client) = write.connections.remove(id) {
             let _ = client.send(SenderMsg::Drop);
         }
     }
