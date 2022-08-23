@@ -1,7 +1,7 @@
 import asyncio
 
-from pywsrpc.client import Client
-from pywsrpc.server import Server
+from broadcast_wsrpc.client import Client
+from broadcast_wsrpc.server import Server
 import pytest
 
 

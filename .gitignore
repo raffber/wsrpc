@@ -1,4 +1,5 @@
 wsrpc/target/
+rust/target/
 venv
 __pycache__
 *.egg-info
