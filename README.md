@@ -10,7 +10,6 @@ Main transport protocol is WebSockets, but for a pure request-response applicati
 
 The serialization format is based on the `serde_json` to facilitate the interaction between rust applications.
 
-
 ## Protocol
 
 The protocol emulates a "bus" and creates a protocol enabling "pub-sub"-like communication patterns. All messages sent
@@ -48,46 +47,46 @@ section, messages may also be serialized as messagepack and sent as binary webso
 
 ### Requests - Client to Server
 
-```
+```json
 {
     "id": "<uuid>",
-    "message": {json encoded message}
+    "message": {"json encoded": "message"}
 }
 ```
 
 ### Requests looped-back from Server to Clients
 
-```
+```json
 {
     "Request": {
         "request": "<request-uuid>",
-        "message": {json encoded message}
+        "message": {"json encoded": "message"}
     }
 }
 ```
 
 ### Replies
 
-```
+```json
 {
     "Reply": {
         "request": "<request-uuid>",
-        "message": {json encoded message}
+        "message": {"json encoded": "message"}
     }
 }
 ```
 
 ### Notifications
 
-```
+```json
 {
-    "Notify": {json encoded message}
+    "Notify": {"json encoded": "message"}
 }
 ```
 
 ### Errors
 
-```
+```json
 {
     "Error": "string describing error"
 }
