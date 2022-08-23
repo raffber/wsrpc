@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [ '*' ]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -45,3 +46,35 @@ jobs:
 
     - name: Check formatting
       run: cd rust && cargo fmt -- --check
+
+    - name: Set up Python 3.8
+      uses: actions/setup-python@v4
+      id: python
+      with:
+        python-version: 3.8
+
+    - name: Install pipenv
+      run: pip install pipenv
+    
+    - name: Test Python Package
+      run: |
+        pipenv --python ${{ steps.python.outputs.python-path }} install --dev
+        cd python
+        pipenv run pytest
+
+    - name: Build Wheel
+      run: |
+        cd python
+        pipenv run python setup.py bdist_wheel
+
+    - name: Setup Flutter 
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.0.5'
+        channel: 'stable'
+    
+    - name: Run Flutter tests
+      run: |
+        cd dart/broadcast_wsrpc
+        flutter pub get
+        flutter test
