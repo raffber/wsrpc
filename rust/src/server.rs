@@ -119,11 +119,6 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Request
     }
 }
 
-enum Merged<Req: Message, Resp: Message> {
-    Interval,
-    Msg(SenderMsg<Req, Resp>),
-}
-
 pub struct LoopbackClient<Req: Message, Resp: Message> {
     rx: UnboundedReceiver<Response<Req, Resp>>,
     tx: UnboundedSender<Request<Req>>,
