@@ -4,11 +4,11 @@ import os
 import asyncio
 
 curdir = dirname(abspath(__file__))
-rootdir = abspath(os.path.join(curdir, '..', '..', '..'))
+rootdir = abspath(os.path.join(curdir, '..', '..', '..', 'python'))
 
 sys.path.insert(0, rootdir)
 
-from pywsrpc.server import InvalidRequest, Server, Quit
+from broadcast_wsrpc.server import InvalidRequest, Server, Quit
 
 
 async def handler(server: Server, message: dict):

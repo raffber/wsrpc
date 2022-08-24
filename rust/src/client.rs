@@ -1,3 +1,7 @@
+//! This module implements a WebSocket client to connect to a message bus.
+//!
+//! Refer to the [`crate::client::Client`] documentation for more information.
+
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -10,11 +14,10 @@ use serde::de::DeserializeOwned;
 use thiserror::Error;
 use tokio::io::ErrorKind;
 use tokio::net::TcpStream;
-use tokio::sync::broadcast::{channel as bc_channel, Receiver as BcReceiver, Sender as BcSender};
+use tokio::sync::broadcast::{channel as bc_channel, Sender as BcSender};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::task;
 use tokio::time::sleep;
-use tokio::time::timeout;
 use url::Url;
 use uuid::Uuid;
 
@@ -23,8 +26,6 @@ use crate::{Message, Request, Response};
 type WsStream = WebSocketStream<TokioAdapter<TcpStream>>;
 
 const BC_CHANNEL_SIZE: usize = 1000;
-
-pub type Monitor<Req, Resp> = BcReceiver<Response<Req, Resp>>;
 
 #[derive(Error, Debug)]
 pub enum ClientError {
@@ -36,6 +37,12 @@ pub enum ClientError {
     ReceiverHungUp,
     #[error("Sender hung up")]
     SenderHungUp,
+}
+
+impl From<io::Error> for ClientError {
+    fn from(x: io::Error) -> Self {
+        ClientError::Io(x)
+    }
 }
 
 #[derive(Clone)]
@@ -51,29 +58,53 @@ pub struct Client<Req: Message, Resp: Message> {
     tx_bc: BcSender<Response<Req, Resp>>,
 }
 
+///
+/// A weboscket client to connect to the message bus.
+/// Use as follows:
+///
+/// ```no_run
+/// # use tokio::runtime::Runtime;
+/// # use serde::{Serialize, Deserialize};
+/// # use broadcast_wsrpc::client::{Client, ClientError};
+/// # use std::result::Result;
+/// # use std::time::Duration;
+/// # use url::Url;
+/// # #[derive(Serialize, Deserialize, Clone)]
+/// # enum Request {
+/// #     Ping
+/// # }
+/// #
+/// # #[derive(Serialize, Deserialize, Clone)]
+/// # enum Response {
+/// #     Pong
+/// # }
+/// # async fn testfun() -> Result<(), ClientError> {
+/// let url = Url::parse("127.0.0.1:8000").unwrap();
+/// let client = Client::connect(url, Duration::from_millis(100)).await?;
+/// let response: Response = client.request(Request::Ping, Duration::from_millis(100)).await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// The client can be cloned but it re-uses the same underlying websocket connection.
+/// The connection closes once the `disconnect()` function is called or the last client is dropped.
 impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + DeserializeOwned>
-Client<Req, Resp>
+    Client<Req, Resp>
 {
-    pub async fn connect<A>(url: A, duration: Duration) -> io::Result<Self>
-        where
-            A: Into<Url>,
+    /// Attempt to connect to the websocket server for the give timeout. Multiple connection attempts
+    /// are made until `timeout` time as expired
+    pub async fn connect<A>(url: A, timeout: Duration) -> io::Result<Self>
+    where
+        A: Into<Url>,
     {
         let start = Instant::now();
         let url = url.into();
 
         loop {
-            match connect_async(url.clone()).await {
-                Ok((stream, _)) => {
-                    return Ok(Self::with_stream(stream));
-                }
-                // TODO: filter by fatal errors
-                // Err(WsError::Io(x)) => {
-                //     // this is fatal
-                //     return Err(x);
-                // }
-                _ => {}
+            if let Ok((stream, _)) = connect_async(url.clone()).await {
+                return Ok(Self::with_stream(stream));
             }
-            if start.elapsed().as_secs_f32() > duration.as_secs_f32() {
+            if start.elapsed().as_secs_f32() > timeout.as_secs_f32() {
                 break;
             }
             sleep(Duration::from_millis(10)).await;
@@ -84,6 +115,7 @@ Client<Req, Resp>
         ))
     }
 
+    /// Initialize a client with a websocket stream that was already connected
     pub fn with_stream(stream: WsStream) -> Self {
         let _ = stream.get_ref().get_ref().set_nodelay(true);
         let (write, read) = stream.split();
@@ -100,28 +132,37 @@ Client<Req, Resp>
         ret
     }
 
-    pub fn monitor(&self) -> Monitor<Req, Resp> {
-        self.tx_bc.subscribe()
-    }
-
-    pub fn notifications(&self) -> UnboundedReceiver<Resp> {
+    /// Subscribe to monitor all messages on the message bus
+    pub fn monitor(&self) -> UnboundedReceiver<Response<Req, Resp>> {
         let mut rx_bc = self.tx_bc.subscribe();
         let (tx, rx) = unbounded_channel();
         task::spawn(async move {
             while let Ok(req) = rx_bc.recv().await {
-                match req {
-                    Response::Notify(msg) => {
-                        if tx.send(msg).is_err() {
-                            break;
-                        }
-                    }
-                    _ => {}
+                if tx.send(req).is_err() {
+                    break;
                 }
             }
         });
         rx
     }
 
+    /// Subscribe to all [`crate::Response::Notify`] messages on the message bus
+    pub fn notifications(&self) -> UnboundedReceiver<Resp> {
+        let mut rx_bc = self.tx_bc.subscribe();
+        let (tx, rx) = unbounded_channel();
+        task::spawn(async move {
+            while let Ok(req) = rx_bc.recv().await {
+                if let Response::Notify(msg) = req {
+                    if tx.send(msg).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+        rx
+    }
+
+    /// Subscribe to all replies and notifications
     pub fn messages(&self) -> UnboundedReceiver<Resp> {
         let mut rx_bc = self.tx_bc.subscribe();
         let (tx, rx) = unbounded_channel();
@@ -149,30 +190,30 @@ Client<Req, Resp>
         rx
     }
 
+    /// Subscribe to all replies sent to the bus
     pub fn replies(&self) -> UnboundedReceiver<(Resp, Uuid)> {
         let mut rx_bc = self.tx_bc.subscribe();
         let (tx, rx) = unbounded_channel();
         task::spawn(async move {
             while let Ok(req) = rx_bc.recv().await {
-                match req {
-                    Response::Reply {
-                        request, message, ..
-                    } => {
-                        if tx.send((message, request)).is_err() {
-                            break;
-                        }
+                if let Response::Reply {
+                    request, message, ..
+                } = req
+                {
+                    if tx.send((message, request)).is_err() {
+                        break;
                     }
-                    _ => {}
                 }
             }
         });
         rx
     }
 
+    /// Send a message to the bus
     pub fn send(&self, msg: Req) -> Option<Uuid> {
         let id = Uuid::new_v4();
         let msg = Request {
-            id: id.clone(),
+            id,
             message: msg,
             sender: None,
         };
@@ -180,14 +221,16 @@ Client<Req, Resp>
         self.tx.send(msg).ok().map(|_| id)
     }
 
+    /// Disconnect the client
     pub fn disconnect(self) {
         log::debug!("Disconnecting sender");
         let _ = self.tx.send(SenderMsg::Drop);
     }
 
-    pub async fn do_query_no_timeout(&self, req: Req) -> Result<Resp, ClientError> {
+    /// Send a request and wait for the response without timeout
+    pub async fn request_no_timeout(&self, request: Req) -> Result<Resp, ClientError> {
         let mut replies = self.replies();
-        if let Some(id) = self.send(req) {
+        if let Some(id) = self.send(request) {
             while let Some((reply, rx_id)) = replies.recv().await {
                 if id == rx_id {
                     return Ok(reply);
@@ -201,8 +244,9 @@ Client<Req, Resp>
         }
     }
 
-    pub async fn query(&self, req: Req, duration: Duration) -> Result<Resp, ClientError> {
-        match timeout(duration, self.do_query_no_timeout(req)).await {
+    /// Send a request and wait for the response up to the given timeout
+    pub async fn request(&self, request: Req, timeout: Duration) -> Result<Resp, ClientError> {
+        match tokio::time::timeout(timeout, self.request_no_timeout(request)).await {
             Ok(x) => x,
             Err(_) => Err(ClientError::Timeout),
         }

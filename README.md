@@ -1,13 +1,11 @@
 # WebSocket & HTTP RPC Library
 
-`wsrpc` is a simple websocket RPC library.
-Note that this is not related to [json-rpc](https://en.wikipedia.org/wiki/JSON-RPC) even though it shares some similarities.
-This repository provides a rust and python based implementation.
+[![Rust Stable](https://github.com/raffber/wsrpc/actions/workflows/ci.yml/badge.svg)](https://github.com/raffber/wsrpc/actions/workflows/ci.yml)
 
-Main transport protocol is WebSockets, but for a pure request-response application an HTTP interface can be provided as well.
+`broadcast_wsrpc` is simple json-rpc-like library with additional "broadcasting" feature emulating a message bus.
+The server supports both HTTP (request-response only) and WebSockets (all communication modes) as transport layer.
 
 The serialization format is based on the `serde_json` to facilitate the interaction between rust applications.
-
 
 ## Protocol
 
@@ -46,46 +44,46 @@ section, messages may also be serialized as messagepack and sent as binary webso
 
 ### Requests - Client to Server
 
-```
+```json
 {
     "id": "<uuid>",
-    "message": {json encoded message}
+    "message": {"json encoded": "message"}
 }
 ```
 
 ### Requests looped-back from Server to Clients
 
-```
+```json
 {
     "Request": {
         "request": "<request-uuid>",
-        "message": {json encoded message}
+        "message": {"json encoded": "message"}
     }
 }
 ```
 
 ### Replies
 
-```
+```json
 {
     "Reply": {
         "request": "<request-uuid>",
-        "message": {json encoded message}
+        "message": {"json encoded": "message"}
     }
 }
 ```
 
 ### Notifications
 
-```
+```json
 {
-    "Notify": {json encoded message}
+    "Notify": {"json encoded": "message"}
 }
 ```
 
 ### Errors
 
-```
+```json
 {
     "Error": "string describing error"
 }

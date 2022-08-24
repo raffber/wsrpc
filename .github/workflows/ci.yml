@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [ '*' ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Restore cargo cache
+      uses: actions/cache@v2
+      env:
+        cache-name: ci
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          ~/.cargo/bin
+          rust/target
+        key: ubuntu-${{ env.cache-name }}-${{ hashFiles('rust/Cargo.lock') }}
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        default: true
+        profile: minimal
+        components: clippy, rustfmt
+    
+    - name: Build Debug
+      run: cd rust && cargo build
+
+    - name: Run tests
+      run: cd rust && cargo test
+
+    - name: Run clippy
+      run: cd rust && cargo clippy
+
+    - name: Check formatting
+      run: cd rust && cargo fmt -- --check
+
+    - name: Set up Python 3.8
+      uses: actions/setup-python@v4
+      id: python
+      with:
+        python-version: 3.8
+
+    - name: Install pipenv
+      run: pip install pipenv
+    
+    - name: Test Python Package
+      run: |
+        pipenv --python ${{ steps.python.outputs.python-path }} install --dev
+        cd python
+        pipenv run pytest
+
+    - name: Build Wheel
+      run: |
+        cd python
+        pipenv run python setup.py bdist_wheel
+
+    - name: Setup Flutter 
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.0.5'
+        channel: 'stable'
+    
+    - name: Run Flutter tests
+      run: |
+        cd dart/broadcast_wsrpc
+        flutter pub get
+        flutter test

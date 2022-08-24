@@ -1,9 +1,9 @@
 use std::convert::Infallible;
-use std::net::SocketAddr;
+use std::net::ToSocketAddrs;
 
 use futures::FutureExt;
-use hyper::Server as HyperServer;
 use hyper::service::{make_service_fn, service_fn};
+use hyper::Server as HyperServer;
 use hyper::{Body, Request as HyperRequest, Response as HyperResponse};
 use serde::de::DeserializeOwned;
 use serde_json::json;
@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 use tokio::task;
 use uuid::Uuid;
 
-use crate::server::Reply;
+use crate::server::RespondTo;
 use crate::server::{Requested, SenderMsg, Server};
 use crate::{Message, Response};
 
@@ -23,7 +23,7 @@ pub(crate) struct HttpServer<Req: Message, Resp: Message> {
 impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static + Send>
     HttpServer<Req, Resp>
 {
-    pub(crate) fn spawn<T: Into<SocketAddr>>(
+    pub(crate) fn spawn<T: ToSocketAddrs>(
         addr: T,
         server: Server<Req, Resp>,
     ) -> oneshot::Sender<()> {
@@ -42,7 +42,9 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
 
         let (cancel_tx, cancel_rx) = oneshot::channel();
 
-        let hyper_server = HyperServer::bind(&addr.into()).serve(make_svc);
+        let mut addr_iter = addr.to_socket_addrs().unwrap();
+        let addr = addr_iter.next().unwrap();
+        let hyper_server = HyperServer::bind(&addr).serve(make_svc);
         let graceful =
             hyper_server.with_graceful_shutdown(async move { cancel_rx.map(|_| ()).await });
 
@@ -58,7 +60,7 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
         });
         let resp = resp.to_string();
         let body: Body = resp.as_bytes().to_vec().into();
-        return Ok(HyperResponse::builder().status(400).body(body).unwrap());
+        Ok(HyperResponse::builder().status(400).body(body).unwrap())
     }
 
     async fn handle(self, req: HyperRequest<Body>) -> Result<HyperResponse<Body>, hyper::Error> {
@@ -80,7 +82,7 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
         let uuid = Uuid::new_v4();
         let req = Requested {
             msg: request.clone(),
-            reply: Reply {
+            reply: RespondTo {
                 id: uuid,
                 server: self.server.clone(),
                 direct: Some(tx),

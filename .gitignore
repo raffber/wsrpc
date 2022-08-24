@@ -1,5 +1,10 @@
 wsrpc/target/
+rust/target/
 venv
 __pycache__
 *.egg-info
 build
+python/dist/
+dart/wsrpc/.dart_tool
+dart/wsrpc/doc
+target

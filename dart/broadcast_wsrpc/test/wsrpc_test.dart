@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:wsrpc/src/client.dart';
+import 'package:broadcast_wsrpc/lib.dart';
 import 'dart:io' show Directory, Process, WebSocket;
 import 'package:test/test.dart';
 import 'package:path/path.dart' show join;
