@@ -10,7 +10,7 @@ requirements = [line.strip() for line in data.split("\n") if line.strip() != ""]
 
 setuptools.setup(
     name="broadcast_wsrpc",
-    version="1.0.0",
+    version="0.1.0",
     author="Raphael Bernhard",
     author_email="beraphae@gmail.com",
     description="WebSocket & HTTP RPC library",

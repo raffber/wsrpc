@@ -15,6 +15,9 @@ jobs:
     steps:
     - uses: actions/checkout@v2
 
+    - name: Check Version
+      run: ci/check_version.sh
+
     - name: Restore cargo cache
       uses: actions/cache@v2
       env:

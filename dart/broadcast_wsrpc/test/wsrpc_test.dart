@@ -17,7 +17,7 @@ Future<Completer> spawnPythonServer() async {
   final proc = Process.run(python, [testServer]);
   final ret = Completer();
   ret.complete(proc);
-  await Future.delayed(Duration(milliseconds: 100));
+  await Future.delayed(Duration(milliseconds: 300));
   return ret;
 }
 
@@ -28,7 +28,7 @@ Future<Completer> spawnHttpPythonServer() async {
   final proc = Process.run(python, [testServer]);
   final ret = Completer();
   ret.complete(proc);
-  await Future.delayed(Duration(milliseconds: 100));
+  await Future.delayed(Duration(milliseconds: 300));
   return ret;
 }
 
