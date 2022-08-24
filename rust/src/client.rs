@@ -1,3 +1,7 @@
+//! This module implements a WebSocket client to connect to a message bus.
+//!
+//! Refer to the [`crate::client::Client`] documentation for more information.
+
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -10,11 +14,10 @@ use serde::de::DeserializeOwned;
 use thiserror::Error;
 use tokio::io::ErrorKind;
 use tokio::net::TcpStream;
-use tokio::sync::broadcast::{channel as bc_channel, Receiver as BcReceiver, Sender as BcSender};
+use tokio::sync::broadcast::{channel as bc_channel, Sender as BcSender};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::task;
 use tokio::time::sleep;
-use tokio::time::timeout;
 use url::Url;
 use uuid::Uuid;
 
@@ -23,8 +26,6 @@ use crate::{Message, Request, Response};
 type WsStream = WebSocketStream<TokioAdapter<TcpStream>>;
 
 const BC_CHANNEL_SIZE: usize = 1000;
-
-pub type Monitor<Req, Resp> = BcReceiver<Response<Req, Resp>>;
 
 #[derive(Error, Debug)]
 pub enum ClientError {
@@ -36,6 +37,12 @@ pub enum ClientError {
     ReceiverHungUp,
     #[error("Sender hung up")]
     SenderHungUp,
+}
+
+impl From<io::Error> for ClientError {
+    fn from(x: io::Error) -> Self {
+        ClientError::Io(x)
+    }
 }
 
 #[derive(Clone)]
@@ -92,8 +99,17 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
         ret
     }
 
-    pub fn monitor(&self) -> Monitor<Req, Resp> {
-        self.tx_bc.subscribe()
+    pub fn monitor(&self) -> UnboundedReceiver<Response<Req, Resp>> {
+        let mut rx_bc = self.tx_bc.subscribe();
+        let (tx, rx) = unbounded_channel();
+        task::spawn(async move {
+            while let Ok(req) = rx_bc.recv().await {
+                if tx.send(req).is_err() {
+                    break;
+                }
+            }
+        });
+        rx
     }
 
     pub fn notifications(&self) -> UnboundedReceiver<Resp> {
@@ -172,9 +188,9 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
         let _ = self.tx.send(SenderMsg::Drop);
     }
 
-    pub async fn do_query_no_timeout(&self, req: Req) -> Result<Resp, ClientError> {
+    pub async fn request_no_timeout(&self, request: Req) -> Result<Resp, ClientError> {
         let mut replies = self.replies();
-        if let Some(id) = self.send(req) {
+        if let Some(id) = self.send(request) {
             while let Some((reply, rx_id)) = replies.recv().await {
                 if id == rx_id {
                     return Ok(reply);
@@ -188,8 +204,8 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
         }
     }
 
-    pub async fn query(&self, req: Req, duration: Duration) -> Result<Resp, ClientError> {
-        match timeout(duration, self.do_query_no_timeout(req)).await {
+    pub async fn request(&self, request: Req, timeout: Duration) -> Result<Resp, ClientError> {
+        match tokio::time::timeout(timeout, self.request_no_timeout(request)).await {
             Ok(x) => x,
             Err(_) => Err(ClientError::Timeout),
         }

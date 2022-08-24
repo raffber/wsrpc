@@ -7,3 +7,4 @@ build
 python/dist/
 dart/wsrpc/.dart_tool
 dart/wsrpc/doc
+target

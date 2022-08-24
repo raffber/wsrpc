@@ -1,5 +1,5 @@
 use std::convert::Infallible;
-use std::net::SocketAddr;
+use std::net::ToSocketAddrs;
 
 use futures::FutureExt;
 use hyper::service::{make_service_fn, service_fn};
@@ -23,7 +23,7 @@ pub(crate) struct HttpServer<Req: Message, Resp: Message> {
 impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static + Send>
     HttpServer<Req, Resp>
 {
-    pub(crate) fn spawn<T: Into<SocketAddr>>(
+    pub(crate) fn spawn<T: ToSocketAddrs>(
         addr: T,
         server: Server<Req, Resp>,
     ) -> oneshot::Sender<()> {
@@ -42,7 +42,9 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
 
         let (cancel_tx, cancel_rx) = oneshot::channel();
 
-        let hyper_server = HyperServer::bind(&addr.into()).serve(make_svc);
+        let mut addr_iter = addr.to_socket_addrs().unwrap();
+        let addr = addr_iter.next().unwrap();
+        let hyper_server = HyperServer::bind(&addr).serve(make_svc);
         let graceful =
             hyper_server.with_graceful_shutdown(async move { cancel_rx.map(|_| ()).await });
 

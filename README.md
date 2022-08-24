@@ -2,11 +2,8 @@
 
 [![Rust Stable](https://github.com/raffber/wsrpc/actions/workflows/ci.yml/badge.svg)](https://github.com/raffber/wsrpc/actions/workflows/ci.yml)
 
-`wsrpc` is a simple websocket RPC library.
-Note that this is not related to [json-rpc](https://en.wikipedia.org/wiki/JSON-RPC) even though it shares some similarities.
-This repository provides a rust and python based implementation.
-
-Main transport protocol is WebSockets, but for a pure request-response application an HTTP interface can be provided as well.
+`broadcast_wsrpc` is simple json-rpc-like library with additional "broadcasting" feature emulating a message bus.
+The server supports both HTTP (request-response only) and WebSockets (all communication modes) as transport layer.
 
 The serialization format is based on the `serde_json` to facilitate the interaction between rust applications.
 

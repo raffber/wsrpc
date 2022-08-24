@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -11,7 +10,7 @@ use futures::stream::SplitSink;
 use futures::SinkExt;
 use log::{debug, info};
 use serde::de::DeserializeOwned;
-use tokio::net::ToSocketAddrs;
+use std::net::ToSocketAddrs;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
@@ -168,7 +167,10 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
 
     pub async fn listen_ws<A: ToSocketAddrs>(&self, addr: A) {
         info!("WsRpc Server Listening");
-        let mut listener = TcpListener::bind(addr).await.expect("Failed to bind");
+        let mut addr = addr.to_socket_addrs().unwrap();
+        let mut listener = TcpListener::bind(addr.next().unwrap())
+            .await
+            .expect("Failed to bind");
 
         let (cancel_tx, cancel_rx) = oneshot::channel();
         {
@@ -213,7 +215,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         }
     }
 
-    pub async fn listen_http<T: Into<SocketAddr>>(&self, http_addr: T) {
+    pub async fn listen_http<T: ToSocketAddrs>(&self, http_addr: T) {
         let abort_handle = HttpServer::spawn(http_addr, self.clone());
         let mut write = self.inner.write().unwrap();
         write.abort_handles.push(abort_handle);
