@@ -129,20 +129,21 @@ impl<M: Message> Request<M> {
 /// Encodes a message as it is sent from the server to clients
 #[derive(Clone, Serialize, Deserialize)]
 pub enum Response<Req: Message, Resp: Message> {
+    /// This message type is sent by the server to answer a request
     Reply {
         request: Uuid,
         message: Resp,
         #[serde(skip)]
         sender: Option<Uuid>,
     },
+    /// This message type is sent by the server to inform all client about an event
     Notify(Resp),
+    /// This message type is sent by the server in case it received an invalid message
     Error(String),
-    Request {
-        id: Uuid,
-        message: Req,
-    },
-    InvalidRequest {
-        id: Uuid,
-        description: String,
-    },
+    /// This message type is sent by the server to broadcast requests it received
+    /// from a client. This behavior can be customized by adjusting `Server::enable_broadcast_reqrep()`.
+    Request { id: Uuid, message: Req },
+    /// This message is broadcast if a Request was received but it could not be de-serialized.
+    /// In this case, no `Error` message is sent
+    InvalidRequest { id: Uuid, description: String },
 }

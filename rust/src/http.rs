@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 use tokio::task;
 use uuid::Uuid;
 
-use crate::server::Reply;
+use crate::server::RespondTo;
 use crate::server::{Requested, SenderMsg, Server};
 use crate::{Message, Response};
 
@@ -82,7 +82,7 @@ impl<Req: Message + 'static + Send + DeserializeOwned, Resp: Message + 'static +
         let uuid = Uuid::new_v4();
         let req = Requested {
             msg: request.clone(),
-            reply: Reply {
+            reply: RespondTo {
                 id: uuid,
                 server: self.server.clone(),
                 direct: Some(tx),

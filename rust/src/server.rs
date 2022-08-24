@@ -1,3 +1,7 @@
+//! This module exposes the [`Server`] struct, which allows spawning a server listening on WebSockets, HTTP
+//! and a local loopback channel.
+//!
+
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -40,20 +44,52 @@ struct ServerShared<Req: Message, Resp: Message> {
     tx_req: Option<UnboundedSender<Requested<Req, Resp>>>,
 }
 
+///
+/// A server which allows listening on WebSockets, HTTP and a local loopback channel.
+///
+/// ```no_run
+/// # use broadcast_wsrpc::server::Server;
+/// # use tokio::runtime::Runtime;
+/// # use serde::{Serialize, Deserialize};
+/// #[derive(Serialize, Deserialize, Clone)]
+/// enum Request { Ping }
+///
+/// #[derive(Serialize, Deserialize, Clone)]
+/// enum Response { Pong }
+///
+/// let rt = Runtime::new().unwrap();
+/// rt.block_on(async move {
+///     let (mut server, mut rx) = Server::<Request, Response>::new();
+///     server.enable_broadcast_reqrep(true); // requests are broadcasted to all clients
+///     server.listen_ws("0.0.0.0:8000").await;
+///     server.listen_http("0.0.0.0:8001").await;
+///     while let Some(_request) = rx.recv().await {
+///         // do something with request
+///         // let response = handle(request);
+///         // request.answer(response)
+///     }
+/// });
+/// ```
 #[derive(Clone)]
 pub struct Server<Req: Message, Resp: Message> {
     inner: Arc<RwLock<ServerShared<Req, Resp>>>,
     broadcast_reqrep: Arc<AtomicBool>,
 }
 
-pub struct Reply<Req: Message, Resp: Message> {
+/// Allows responding to a specific request.
+///
+/// This type is obtained by calling `split()` on a [`Requested`] type.
+/// The application can decide whether it wants to unicast or broadcast the response or leave
+/// it up to the server settings.
+pub struct RespondTo<Req: Message, Resp: Message> {
     pub(crate) id: Uuid,
     pub(crate) server: Server<Req, Resp>,
     pub(crate) direct: Option<oneshot::Sender<Resp>>,
     pub(crate) sender: Option<Uuid>,
 }
 
-impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Reply<Req, Resp> {
+impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> RespondTo<Req, Resp> {
+    /// Reply to the request, either by unicast or broadcast depending on the server settings.
     pub fn answer(self, resp: Resp) {
         let broadcast = self.server.broadcast_reqrep.load(Ordering::SeqCst);
         if broadcast {
@@ -63,6 +99,8 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Reply<R
         }
     }
 
+    /// Reply to the request but only sending the response back the client where the request
+    /// originated from.
     pub fn answer_unicast(mut self, resp: Resp) {
         if let Some(direct) = self.direct.take() {
             let _ = direct.send(resp.clone());
@@ -78,6 +116,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Reply<R
         }
     }
 
+    /// Reply to the request by broadcasting the response to all client
     pub fn answer_broadcast(mut self, resp: Resp) {
         if let Some(direct) = self.direct.take() {
             let _ = direct.send(resp.clone());
@@ -95,9 +134,10 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Reply<R
     }
 }
 
+/// A type capturing a request and the means to answer the request.
 pub struct Requested<Req: Message, Resp: Message> {
     pub(crate) msg: Req,
-    pub(crate) reply: Reply<Req, Resp>,
+    pub(crate) reply: RespondTo<Req, Resp>,
 }
 
 impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Requested<Req, Resp> {
@@ -109,7 +149,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Request
         &self.msg
     }
 
-    pub fn split(self) -> (Req, Reply<Req, Resp>) {
+    pub fn split(self) -> (Req, RespondTo<Req, Resp>) {
         (self.msg, self.reply)
     }
 
@@ -118,20 +158,24 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Request
     }
 }
 
+/// A client channel that can be used to loop back requests from the server.
 pub struct LoopbackClient<Req: Message, Resp: Message> {
     rx: UnboundedReceiver<Response<Req, Resp>>,
     tx: UnboundedSender<Request<Req>>,
 }
 
 impl<Req: Message, Resp: Message> LoopbackClient<Req, Resp> {
+    /// Returns a sender that allows sending requests
     pub fn sender(&self) -> UnboundedSender<Request<Req>> {
         self.tx.clone()
     }
 
+    /// Returns a receiver that receives all messages transmitted from the server to the client
     pub fn receiver(self) -> UnboundedReceiver<Response<Req, Resp>> {
         self.rx
     }
 
+    /// Split the client into sender and receiver
     pub fn split(
         self,
     ) -> (
@@ -141,12 +185,16 @@ impl<Req: Message, Resp: Message> LoopbackClient<Req, Resp> {
         (self.tx, self.rx)
     }
 
+    /// Receive the next message from the server
     pub async fn next(&mut self) -> Option<Response<Req, Resp>> {
         self.rx.recv().await
     }
 }
 
 impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<Req, Resp> {
+    /// Create a new server, returning the server instance and a receiver for the messages it receives.
+    ///
+    /// The application should listen to the receiver and handle all requests it receives.
     pub fn new() -> (Self, UnboundedReceiver<Requested<Req, Resp>>) {
         let (tx_req, rx_req) = unbounded_channel();
         let inner = ServerShared {
@@ -161,10 +209,17 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         (server, rx_req)
     }
 
+    /// By default enable broadcasting responses to all connected client
+    ///
+    /// The application may still customize the behavior for each request it handles, by
+    /// calling either `RespondTo::answer_unicast()` or `RespondTo::answer_broadcast()`.
     pub fn enable_broadcast_reqrep(&self, enable_reqrep: bool) {
         self.broadcast_reqrep.store(enable_reqrep, Ordering::SeqCst);
     }
 
+    /// Listen for WebSocket connections on the given socket address.
+    ///
+    /// This function may be called several times to spawn multiple sockets.
     pub async fn listen_ws<A: ToSocketAddrs>(&self, addr: A) {
         info!("WsRpc Server Listening");
         let mut addr = addr.to_socket_addrs().unwrap();
@@ -193,7 +248,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         });
     }
 
-    pub async fn dispatch_request(&self, req: Requested<Req, Resp>) -> bool {
+    pub(crate) async fn dispatch_request(&self, req: Requested<Req, Resp>) -> bool {
         let read = self.inner.read().unwrap();
         if let Some(tx) = &read.tx_req {
             tx.send(req).is_ok()
@@ -215,12 +270,16 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         }
     }
 
+    /// Listen on socket address for HTTP requests
+    ///
+    /// This function may called several times to spawn multiple HTTP endpoints.
     pub async fn listen_http<T: ToSocketAddrs>(&self, http_addr: T) {
         let abort_handle = HttpServer::spawn(http_addr, self.clone());
         let mut write = self.inner.write().unwrap();
         write.abort_handles.push(abort_handle);
     }
 
+    /// Create a local [`LoopbackClient`] which allows sending requests without opening any sockets.
     pub async fn loopback(&self) -> LoopbackClient<Req, Resp> {
         let (client_tx, mut client_rx) = unbounded_channel::<Request<Req>>();
         let (sender_tx, mut sender_rx) = unbounded_channel();
@@ -400,7 +459,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         }
         self.dispatch_request(Requested {
             msg: msg.message,
-            reply: Reply {
+            reply: RespondTo {
                 id,
                 server,
                 direct: None,
@@ -419,6 +478,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         }
     }
 
+    /// Broadcast a "Notify" message to all clients
     pub fn broadcast(&self, resp: Resp) {
         let msg = SenderMsg::Message(Response::Notify(resp));
         let server = self.clone();
@@ -455,6 +515,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         }
     }
 
+    /// Shutdown the server, disconnecting all clients.
     pub async fn shutdown(&self) {
         info!("Closing all client connections.");
         let mut write = self.inner.write().unwrap();

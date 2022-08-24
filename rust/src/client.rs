@@ -58,10 +58,42 @@ pub struct Client<Req: Message, Resp: Message> {
     tx_bc: BcSender<Response<Req, Resp>>,
 }
 
+///
+/// A weboscket client to connect to the message bus.
+/// Use as follows:
+///
+/// ```no_run
+/// # use tokio::runtime::Runtime;
+/// # use serde::{Serialize, Deserialize};
+/// # use broadcast_wsrpc::client::{Client, ClientError};
+/// # use std::result::Result;
+/// # use std::time::Duration;
+/// # use url::Url;
+/// # #[derive(Serialize, Deserialize, Clone)]
+/// # enum Request {
+/// #     Ping
+/// # }
+/// #
+/// # #[derive(Serialize, Deserialize, Clone)]
+/// # enum Response {
+/// #     Pong
+/// # }
+/// # async fn testfun() -> Result<(), ClientError> {
+/// let url = Url::parse("127.0.0.1:8000").unwrap();
+/// let client = Client::connect(url, Duration::from_millis(100)).await?;
+/// let response: Response = client.request(Request::Ping, Duration::from_millis(100)).await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// The client can be cloned but it re-uses the same underlying websocket connection.
+/// The connection closes once the `disconnect()` function is called or the last client is dropped.
 impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + DeserializeOwned>
     Client<Req, Resp>
 {
-    pub async fn connect<A>(url: A, duration: Duration) -> io::Result<Self>
+    /// Attempt to connect to the websocket server for the give timeout. Multiple connection attempts
+    /// are made until `timeout` time as expired
+    pub async fn connect<A>(url: A, timeout: Duration) -> io::Result<Self>
     where
         A: Into<Url>,
     {
@@ -72,7 +104,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
             if let Ok((stream, _)) = connect_async(url.clone()).await {
                 return Ok(Self::with_stream(stream));
             }
-            if start.elapsed().as_secs_f32() > duration.as_secs_f32() {
+            if start.elapsed().as_secs_f32() > timeout.as_secs_f32() {
                 break;
             }
             sleep(Duration::from_millis(10)).await;
@@ -83,6 +115,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
         ))
     }
 
+    /// Initialize a client with a websocket stream that was already connected
     pub fn with_stream(stream: WsStream) -> Self {
         let _ = stream.get_ref().get_ref().set_nodelay(true);
         let (write, read) = stream.split();
@@ -99,6 +132,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
         ret
     }
 
+    /// Subscribe to monitor all messages on the message bus
     pub fn monitor(&self) -> UnboundedReceiver<Response<Req, Resp>> {
         let mut rx_bc = self.tx_bc.subscribe();
         let (tx, rx) = unbounded_channel();
@@ -112,6 +146,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
         rx
     }
 
+    /// Subscribe to all [`crate::Response::Notify`] messages on the message bus
     pub fn notifications(&self) -> UnboundedReceiver<Resp> {
         let mut rx_bc = self.tx_bc.subscribe();
         let (tx, rx) = unbounded_channel();
@@ -127,6 +162,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
         rx
     }
 
+    /// Subscribe to all replies and notifications
     pub fn messages(&self) -> UnboundedReceiver<Resp> {
         let mut rx_bc = self.tx_bc.subscribe();
         let (tx, rx) = unbounded_channel();
@@ -154,6 +190,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
         rx
     }
 
+    /// Subscribe to all replies sent to the bus
     pub fn replies(&self) -> UnboundedReceiver<(Resp, Uuid)> {
         let mut rx_bc = self.tx_bc.subscribe();
         let (tx, rx) = unbounded_channel();
@@ -172,6 +209,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
         rx
     }
 
+    /// Send a message to the bus
     pub fn send(&self, msg: Req) -> Option<Uuid> {
         let id = Uuid::new_v4();
         let msg = Request {
@@ -183,11 +221,13 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
         self.tx.send(msg).ok().map(|_| id)
     }
 
+    /// Disconnect the client
     pub fn disconnect(self) {
         log::debug!("Disconnecting sender");
         let _ = self.tx.send(SenderMsg::Drop);
     }
 
+    /// Send a request and wait for the response without timeout
     pub async fn request_no_timeout(&self, request: Req) -> Result<Resp, ClientError> {
         let mut replies = self.replies();
         if let Some(id) = self.send(request) {
@@ -204,6 +244,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message + Deseri
         }
     }
 
+    /// Send a request and wait for the response up to the given timeout
     pub async fn request(&self, request: Req, timeout: Duration) -> Result<Resp, ClientError> {
         match tokio::time::timeout(timeout, self.request_no_timeout(request)).await {
             Ok(x) => x,
