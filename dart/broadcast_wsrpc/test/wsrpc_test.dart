@@ -100,6 +100,6 @@ void main() {
         // ignore: empty_catches
       } catch (err) {}
       await proc.future;
-    });
+    }, skip: true);
   });
 }
