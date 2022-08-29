@@ -1,7 +1,8 @@
 import 'dart:async';
 
 import 'package:broadcast_wsrpc/lib.dart';
-import 'dart:io' show Directory, Process, WebSocket;
+import 'dart:io'
+    show Directory, HttpClient, Process, SocketException, WebSocket;
 import 'package:test/test.dart';
 import 'package:path/path.dart' show join;
 
@@ -17,7 +18,6 @@ Future<Completer> spawnPythonServer() async {
   final proc = Process.run(python, [testServer]);
   final ret = Completer();
   ret.complete(proc);
-  await Future.delayed(Duration(milliseconds: 300));
   return ret;
 }
 
@@ -28,15 +28,37 @@ Future<Completer> spawnHttpPythonServer() async {
   final proc = Process.run(python, [testServer]);
   final ret = Completer();
   ret.complete(proc);
-  await Future.delayed(Duration(milliseconds: 300));
   return ret;
+}
+
+Future<WebSocket> connect(String url) async {
+  while (true) {
+    try {
+      return await WebSocket.connect(url);
+    } on SocketException catch (_) {
+      await Future.delayed(Duration(milliseconds: 10));
+    }
+  }
+}
+
+Future<void> connectHttp(String url) async {
+  while (true) {
+    try {
+      final client = HttpClient();
+      await client.postUrl(Uri.parse(url));
+      return;
+    } on SocketException catch (_) {
+      await Future.delayed(Duration(milliseconds: 10));
+    }
+  }
 }
 
 void main() {
   group('Basics', () {
     test('Check Request', () async {
       final proc = await spawnPythonServer();
-      final ws = await WebSocket.connect("ws://127.0.0.1:7479");
+      final ws =
+          await connect("ws://127.0.0.1:7479").timeout(Duration(seconds: 2));
       final client = Client(ws);
       final reply =
           await client.request({'Foo': 'Bar'}, Duration(milliseconds: 300));
@@ -49,7 +71,8 @@ void main() {
 
     test('Invalid Request', () async {
       final proc = await spawnPythonServer();
-      final ws = await WebSocket.connect("ws://127.0.0.1:7479");
+      final ws =
+          await connect("ws://127.0.0.1:7479").timeout(Duration(seconds: 2));
       final client = Client(ws);
       var invalidRequest = false;
       try {
@@ -67,7 +90,9 @@ void main() {
 
     test('http', () async {
       final proc = await spawnHttpPythonServer();
-      final rpc = HttpRpc("http://127.0.0.1:7480");
+      final url = "http://127.0.0.1:7480";
+      await connectHttp(url).timeout(Duration(seconds: 2));
+      final rpc = HttpRpc(url);
       final reply = await rpc.request({"Foo": "Bar"});
       assert(reply['Foo'] == 'Bar');
       try {
