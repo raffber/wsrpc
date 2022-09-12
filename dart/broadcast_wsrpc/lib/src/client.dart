@@ -173,6 +173,19 @@ class Client {
     }
   }
 
+  /// Registers a new stream returning messages on the communication bus
+  Stream<JsonObject> messages() async* {
+    final rx = Receiver<JsonObject>(this);
+    receivers.add(rx);
+    try {
+      await for (final message in rx._stream.stream) {
+        yield message;
+      }
+    } finally {
+      rx.close();
+    }
+  }
+
   /// Send a request message to the bus, optionally a request-id can
   /// be provided, such that corresponding responses could be tracked.
   void sendRequest(JsonObject request, {UuidValue? id}) {
