@@ -144,7 +144,7 @@ class Client {
   ///
   ///   await client.listen((stream) async {
   ///     // do something with `stream`
-  ///     async for (message in stream) {
+  ///     async for (final message in stream) {
   ///       // do something with `message`
   ///     }
   ///   })
@@ -153,6 +153,21 @@ class Client {
     receivers.add(rx);
     try {
       return await cb(rx._stream.stream);
+    } finally {
+      rx.close();
+    }
+  }
+
+  /// Registers a receiver and start listen to messages on the message bus.
+  /// The callback returns a stream of messages based on the received messages.
+  /// Once the stream is done, the receiver is automatically unregistrered.
+  Stream<S> stream<S>(Stream<S> Function(Stream<JsonObject>) cb) async* {
+    final rx = Receiver<JsonObject>(this);
+    receivers.add(rx);
+    try {
+      await for (final message in cb(rx._stream.stream)) {
+        yield message;
+      }
     } finally {
       rx.close();
     }
