@@ -174,9 +174,12 @@ class Client {
   }
 
   /// Registers a new stream returning messages on the communication bus
-  Stream<JsonObject> messages() async* {
+  Stream<JsonObject> messages({Future<void> Function()? runBefore}) async* {
     final rx = Receiver<JsonObject>(this);
     receivers.add(rx);
+    if (runBefore != null) {
+      await runBefore();
+    }
     try {
       await for (final message in rx._stream.stream) {
         yield message;
