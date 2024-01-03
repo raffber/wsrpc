@@ -8,3 +8,6 @@ python/dist/
 dart/wsrpc/.dart_tool
 dart/wsrpc/doc
 target
+.mypy_cache
+.pyprojectx
+.venv

@@ -1,0 +1,37 @@
+[tool.poetry]
+name = "broadcast_wsrpc"
+version = "0.2.0"
+description = "WebSocket & HTTP RPC library"
+authors = ["Raphael Bernhard <beraphae@gmail.com>"]
+packages = [{ include = "broadcast_wsrpc", from = "python" }]
+
+[tool.poetry.dependencies]
+python = ">=3.8, <4.0"
+msgpack = "^1.0"
+websockets = "^10.1"
+aiohttp = "^3.7"
+
+[tool.poetry.dev-dependencies]
+black = "23.3"
+ruff = "^0.1.7"
+mypy = "^1.2.0"
+poetry = "^1.7.1"
+pytest = "^7.4.3"
+pytest-asyncio = "^0.23.2"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pyprojectx]
+poetry = "poetry==1.7.1"
+
+[tool.pyprojectx.aliases]
+install = "poetry install"
+run = "poetry run"
+outdated = "poetry show --outdated"
+test = "poetry run pytest"
+
+[tool.pytest.ini_options]
+testpaths = ["python/broadcast_wsrpc"]
+python_files = "/*/test_*.py"

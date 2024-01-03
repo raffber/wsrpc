@@ -3,8 +3,8 @@ import json
 from asyncio import iscoroutinefunction
 from uuid import UUID
 
-import msgpack
-from websockets import serve, ConnectionClosed
+import msgpack # type: ignore
+from websockets import serve, ConnectionClosed # type: ignore
 
 
 class Quit(Exception):
@@ -163,7 +163,7 @@ class Connection(object):
                 msg = json.loads(msg)
             else:  # isinstance(msg, bytes)
                 msg = msgpack.unpackb(msg)
-        except:
+        except Exception:
             await self._server.send_error("Invalid JSON")
             return
         if 'id' not in msg:
