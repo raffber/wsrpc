@@ -4,7 +4,7 @@ from asyncio import Queue, QueueFull
 from typing import Callable
 from uuid import uuid4
 
-import msgpack
+import msgpack  # type: ignore
 from websockets import connect
 
 RX_QUEUE_SIZE = 1000
@@ -106,7 +106,7 @@ class Receiver(object):
                 rx = self._queue.get_nowait()
                 self._queue.task_done()
                 ret.append(rx)
-            except:
+            except Exception:
                 break
         return ret
 
@@ -203,7 +203,10 @@ class Client(object):
         Refer to the documentation of the `Reciever` class for more information.
         """
         if flt is None:
-            flt = lambda x: x
+
+            def flt(x):
+                return
+
         rx = Receiver(self, flt)
         return rx
 
@@ -223,6 +226,7 @@ class Client(object):
         """
         Return a `Receiver` filtering messages for `Notification` and `Reply` messages.
         """
+
         def mapper(x):
             if "Reply" in x:
                 return x["Reply"]["message"]

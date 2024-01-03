@@ -3,14 +3,15 @@ import json
 from asyncio import iscoroutinefunction
 from uuid import UUID
 
-import msgpack # type: ignore
-from websockets import serve, ConnectionClosed # type: ignore
+import msgpack  # type: ignore
+from websockets import serve, ConnectionClosed
 
 
 class Quit(Exception):
     """
     Exception to quit the server task
     """
+
     pass
 
 
@@ -19,6 +20,7 @@ class InvalidRequest(Exception):
     This exception may be raised in the request handler functionpassed with `Server(handler)`.
     It should be used in the case the request was invalid.
     """
+
     def __init__(self, message: str) -> None:
         self._message = message
         super().__init__(message)
@@ -44,6 +46,7 @@ class Server(object):
     case the message is sent back onto the "bus".
     The signature of the handler is: `def handler(Server, dict)`
     """
+
     def __init__(self, handler):
         self._connected = {}
         self._server = None
@@ -63,7 +66,7 @@ class Server(object):
         """
         Broadcast a message to all clients
         """
-        msg = {'Notify': msg}
+        msg = {"Notify": msg}
         connected = list(self._connected.keys())
         msg = json.dumps(msg)
         for con in connected:
@@ -73,14 +76,14 @@ class Server(object):
         """
         Answer a previous request.
         """
-        msg = {'Reply': {'request': id, 'message': msg}}
+        msg = {"Reply": {"request": id, "message": msg}}
         connected = list(self._connected.keys())
         msg = json.dumps(msg)
         for con in connected:
             await con.send(msg)
 
     async def send_invalid_request(self, id, msg):
-        msg = {'InvalidRequest': {'id': id, 'description': msg}}
+        msg = {"InvalidRequest": {"id": id, "description": msg}}
         connected = list(self._connected.keys())
         msg = json.dumps(msg)
         for con in connected:
@@ -123,6 +126,7 @@ class Connection(object):
     """
     Handles a client connection
     """
+
     def __init__(self, server: Server, ws):
         self._server = server
         self._ws = ws
@@ -166,13 +170,13 @@ class Connection(object):
         except Exception:
             await self._server.send_error("Invalid JSON")
             return
-        if 'id' not in msg:
+        if "id" not in msg:
             # not a request
             return
-        if not isinstance(msg['id'], str):
+        if not isinstance(msg["id"], str):
             await self._server.send_error("Invalid UUID")
             return
-        id = msg['id']
+        id = msg["id"]
         try:
             UUID(id)
         except ValueError:
@@ -182,9 +186,9 @@ class Connection(object):
         handler = self._server.handler
         try:
             if iscoroutinefunction(handler):
-                reply = await handler(self._server, msg['message'])
+                reply = await handler(self._server, msg["message"])
             else:
-                reply = handler(self._server, msg['message'])
+                reply = handler(self._server, msg["message"])
         except InvalidRequest as e:
             await self._server.send_invalid_request(id, e.message)
             return
