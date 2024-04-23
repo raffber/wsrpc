@@ -7,9 +7,7 @@ import 'package:test/test.dart';
 import 'package:path/path.dart' show join;
 
 Future<String> getPython() async {
-  final result = await Process.run("pipenv", ["--venv"]);
-  final venvPath = (result.stdout as String).trim();
-  return join(venvPath, "bin", "python");
+  return join(Directory.current.path, "..", "..", ".venv", "bin", "python");
 }
 
 Future<Completer> spawnPythonServer() async {
