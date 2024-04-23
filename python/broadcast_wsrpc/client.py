@@ -1,7 +1,7 @@
 import asyncio
 import json
 from asyncio import Queue, QueueFull
-from typing import Any, Callable, Dict, Generic, List, TypeVar
+from typing import Any, Awaitable, Callable, Dict, Generic, List, TypeVar
 from uuid import uuid4
 
 from broadcast_wsrpc import JsonDict, JsonType
@@ -275,7 +275,8 @@ class Client(object):
 
         with self.listen(flt) as rx:
             await self.send_request(msg, id=id)
-            return await asyncio.wait_for(rx.next(), timeout)
+            fut: Awaitable[JsonType] = rx.next(timeout)  # type: ignore
+            return await asyncio.wait_for(fut, timeout)
 
     async def disconnect(self) -> None:
         """
