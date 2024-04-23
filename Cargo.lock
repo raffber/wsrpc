@@ -65,7 +65,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast_wsrpc"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-tungstenite",
  "env_logger",
