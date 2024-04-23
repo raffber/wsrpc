@@ -13,7 +13,7 @@ async def test_listener() -> None:
             await srv.shutdown()
         return req
 
-    server = Server(handler)
+    server = Server(handler)  # type: ignore
     server_task = asyncio.create_task(server.run("127.0.0.1", 1234))
     await asyncio.sleep(0.1)
 

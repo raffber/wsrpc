@@ -11,19 +11,19 @@ msgpack = "^1.0"
 websockets = ">=10, <=12"
 
 [tool.poetry.dev-dependencies]
-black = "23.3"
-ruff = "^0.1.7"
-mypy = "^1.2.0"
-poetry = "^1.7.1"
+black = "^24.4"
+ruff = "^0.4.1"
+mypy = "^1.8.0"
+poetry = "^1.8.2"
 pytest = "^7.4.3"
-pytest-asyncio = "^0.23.2"
+pytest-asyncio = "^0.23.6"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.pyprojectx]
-poetry = "poetry==1.7.1"
+poetry = "poetry==1.8.2"
 
 [tool.pyprojectx.aliases]
 install = "poetry install"

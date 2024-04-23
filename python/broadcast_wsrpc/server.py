@@ -1,10 +1,12 @@
 import asyncio
 import json
-from asyncio import iscoroutinefunction
+from asyncio import Task, iscoroutinefunction
+from typing import Any, Callable, Coroutine, Dict
 from uuid import UUID
 
+from broadcast_wsrpc import JsonType
 import msgpack  # type: ignore
-from websockets import serve, ConnectionClosed
+from websockets import WebSocketServer, WebSocketServerProtocol, serve, ConnectionClosed
 
 
 class Quit(Exception):
@@ -26,7 +28,7 @@ class InvalidRequest(Exception):
         super().__init__(message)
 
     @property
-    def message(self):
+    def message(self) -> str:
         return self._message
 
 
@@ -36,6 +38,8 @@ REQUEST_SCHEMA = {
     "message": {"type": "object"},
 }
 
+HandlerType = Callable[["Server", JsonType], JsonType | Coroutine[Any, Any, JsonType]]
+
 
 class Server(object):
     """
@@ -44,15 +48,14 @@ class Server(object):
     The server must be given a message handler, which is called for
     each incoming message. The handler may return a message, in which
     case the message is sent back onto the "bus".
-    The signature of the handler is: `def handler(Server, dict)`
     """
 
-    def __init__(self, handler):
-        self._connected = {}
-        self._server = None
+    def __init__(self, handler: HandlerType):
+        self._connected: Dict[Connection, Task[None]] = {}
+        self._server: WebSocketServer | None = None
         self._handler = handler
 
-    async def run(self, socketaddr: str, port: int, **kw):
+    async def run(self, socketaddr: str, port: int, **kw: Any) -> None:
         """
         Creates a websocket server on the given address, listening on the given port.
         This function will only return, once the server has terminated.
@@ -62,7 +65,7 @@ class Server(object):
         self._server = await serve(self._connection_handler, socketaddr, port, **kw)
         await self._server.wait_closed()
 
-    async def broadcast(self, msg):
+    async def broadcast(self, msg: JsonType) -> None:
         """
         Broadcast a message to all clients
         """
@@ -72,7 +75,7 @@ class Server(object):
         for con in connected:
             await con.send(msg)
 
-    async def answer(self, id, msg):
+    async def answer(self, id: str, msg: JsonType) -> None:
         """
         Answer a previous request.
         """
@@ -82,14 +85,14 @@ class Server(object):
         for con in connected:
             await con.send(msg)
 
-    async def send_invalid_request(self, id, msg):
+    async def send_invalid_request(self, id: str, msg: JsonType) -> None:
         msg = {"InvalidRequest": {"id": id, "description": msg}}
         connected = list(self._connected.keys())
         msg = json.dumps(msg)
         for con in connected:
             await con.send(msg)
 
-    async def send_error(self, msg):
+    async def send_error(self, msg: JsonType) -> None:
         """
         Send an error message
         """
@@ -99,26 +102,26 @@ class Server(object):
         for con in connected:
             await con.send(msg)
 
-    async def _connection_handler(self, ws, path):
+    async def _connection_handler(self, ws: WebSocketServerProtocol, path: str) -> None:
         connection = Connection(self, ws)
         connection_task = asyncio.create_task(connection.run())
         self._connected[connection] = connection_task
         await connection_task
 
-    def unregister_client(self, client):
-        del self._connected[client]
+    def unregister_client(self, connection: "Connection") -> None:
+        del self._connected[connection]
 
-    async def shutdown(self):
+    async def shutdown(self) -> None:
         """
         Close all connections and shut down the server
         """
         for connection, task in list(self._connected.items()):
             await connection.close()
-            # task.cancel()
-        self._server.close()
+        if self._server is not None:
+            self._server.close()
 
     @property
-    def handler(self):
+    def handler(self) -> HandlerType:
         return self._handler
 
 
@@ -127,17 +130,17 @@ class Connection(object):
     Handles a client connection
     """
 
-    def __init__(self, server: Server, ws):
+    def __init__(self, server: Server, ws: WebSocketServerProtocol) -> None:
         self._server = server
         self._ws = ws
 
-    async def close(self):
+    async def close(self) -> None:
         """
         Close this connection
         """
         await self._ws.close()
 
-    async def run(self):
+    async def run(self) -> None:
         """
         Run this connection. This coroutine
         will run until this connection has been
@@ -153,13 +156,13 @@ class Connection(object):
         finally:
             self._server.unregister_client(self)
 
-    async def send(self, msg):
+    async def send(self, msg: str | bytes) -> None:
         """
         Send a message to this connection
         """
         await self._ws.send(msg)
 
-    async def _loop(self):
+    async def _loop(self) -> None:
         # handles one incoming message
         msg = await self._ws.recv()
         try:
@@ -173,10 +176,10 @@ class Connection(object):
         if "id" not in msg:
             # not a request
             return
-        if not isinstance(msg["id"], str):
+        if not isinstance(msg["id"], str):  # type: ignore
             await self._server.send_error("Invalid UUID")
             return
-        id = msg["id"]
+        id = msg["id"]  # type: ignore
         try:
             UUID(id)
         except ValueError:
@@ -186,9 +189,9 @@ class Connection(object):
         handler = self._server.handler
         try:
             if iscoroutinefunction(handler):
-                reply = await handler(self._server, msg["message"])
+                reply = await handler(self._server, msg["message"])  # type: ignore
             else:
-                reply = handler(self._server, msg["message"])
+                reply = handler(self._server, msg["message"])  # type: ignore
         except InvalidRequest as e:
             await self._server.send_invalid_request(id, e.message)
             return
