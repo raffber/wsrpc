@@ -203,7 +203,7 @@ class Client(object):
                     continue
         self._ws = None
 
-    def listen(self, flt: Callable[[JsonDict], T]) -> Receiver[T]:
+    def listen(self, flt: Callable[[JsonDict], T | None]) -> Receiver[T]:
         """
         Listen to messages on the buf, optionally applying the `flt` filter-map function.
         Refer to the documentation of the `Reciever` class for more information.
