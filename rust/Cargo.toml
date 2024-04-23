@@ -1,6 +1,6 @@
 [package]
 name = "broadcast_wsrpc"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Raphael Bernhard <beraphae@gmail.com>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
@@ -20,7 +20,7 @@ uuid = { version = "0.8", features = ["serde", "v4"] }
 
 [dependencies.serde]
 features = ["derive"]
-version = "1"
+version = "0.2.1"
 
 [dev-dependencies]
 tokio = { version = "^1", features = ["full"] }

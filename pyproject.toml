@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "broadcast_wsrpc"
-version = "0.2.0"
+version = "0.2.1"
 description = "WebSocket & HTTP RPC library"
 authors = ["Raphael Bernhard <beraphae@gmail.com>"]
 packages = [{ include = "broadcast_wsrpc", from = "python" }]
