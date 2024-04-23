@@ -31,6 +31,8 @@ run = "poetry run"
 outdated = "poetry show --outdated"
 test = "poetry run pytest"
 types = "poetry run mypy python/broadcast_wsrpc"
+build = "poetry build --format wheel"
+check = "poetry run ruff check python/broadcast_wsrpc"
 
 [tool.pytest.ini_options]
 testpaths = ["python/broadcast_wsrpc"]

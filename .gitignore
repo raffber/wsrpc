@@ -11,3 +11,4 @@ target
 .mypy_cache
 .pyprojectx
 .venv
+dist/

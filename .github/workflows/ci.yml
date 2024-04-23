@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ '*' ]
+    branches: ["*"]
   workflow_dispatch:
 
 env:
@@ -13,71 +13,64 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+      - uses: actions/checkout@v2
 
-    - name: Check Version
-      run: ci/check_version.sh
+      - name: Check Version
+        run: ci/check_version.sh
 
-    - name: Restore cargo cache
-      uses: actions/cache@v2
-      env:
-        cache-name: ci
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          ~/.cargo/bin
-          rust/target
-        key: ubuntu-${{ env.cache-name }}-${{ hashFiles('rust/Cargo.lock') }}
+      - name: Restore cargo cache
+        uses: actions/cache@v2
+        env:
+          cache-name: ci
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin
+            rust/target
+          key: ubuntu-${{ env.cache-name }}-${{ hashFiles('rust/Cargo.lock') }}
 
-    - name: Install Rust
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        default: true
-        profile: minimal
-        components: clippy, rustfmt
-    
-    - name: Build Debug
-      run: cd rust && cargo build
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          default: true
+          profile: minimal
+          components: clippy, rustfmt
 
-    - name: Run tests
-      run: cd rust && cargo test
+      - name: Build Debug
+        run: cd rust && cargo build
 
-    - name: Run clippy
-      run: cd rust && cargo clippy
+      - name: Run tests
+        run: cd rust && cargo test
 
-    - name: Check formatting
-      run: cd rust && cargo fmt -- --check
+      - name: Run clippy
+        run: cd rust && cargo clippy
 
-    - name: Set up Python 3.8
-      uses: actions/setup-python@v4
-      id: python
-      with:
-        python-version: 3.8
+      - name: Check formatting
+        run: cd rust && cargo fmt -- --check
 
-    - name: Install pipenv
-      run: pip install pipenv
-    
-    - name: Test Python Package
-      run: |
-        pipenv --python ${{ steps.python.outputs.python-path }} install --dev
-        cd python
-        pipenv run pytest
+      - name: Test Python Package
+        run: |
+          ./pw install
+          ./pw test
 
-    - name: Build Wheel
-      run: |
-        cd python
-        pipenv run python setup.py bdist_wheel
+      - name: Check types
+        run: |
+          ./pw types
 
-    - name: Setup Flutter 
-      uses: subosito/flutter-action@v2
-      with:
-        flutter-version: '3.0.5'
-        channel: 'stable'
-    
-    - name: Run Flutter tests
-      run: |
-        cd dart/broadcast_wsrpc
-        flutter pub get
-        flutter test
+      - name: Build Wheel
+        run: |
+          ./pw build
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.0.5"
+          channel: "stable"
+
+      - name: Run Flutter tests
+        run: |
+          cd dart/broadcast_wsrpc
+          flutter pub get
+          flutter test
