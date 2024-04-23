@@ -4,6 +4,7 @@ on:
   push:
     branches: ["*"]
   workflow_dispatch:
+  workflow_call:
 
 env:
   CARGO_TERM_COLOR: always
@@ -63,6 +64,11 @@ jobs:
         run: |
           ./pw build
 
+      - name: Copy wheel to out
+        run: |
+          mkdir -p out
+          cp dist/*.whl out/
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -74,3 +80,10 @@ jobs:
           cd dart/broadcast_wsrpc
           flutter pub get
           flutter test
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: build_artifacts
+          path: |
+            out/*.whl
