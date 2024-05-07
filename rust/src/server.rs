@@ -3,6 +3,7 @@
 //!
 
 use std::collections::{HashMap, HashSet};
+use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -14,7 +15,7 @@ use futures::stream::SplitSink;
 use futures::SinkExt;
 use log::{debug, info};
 use serde::de::DeserializeOwned;
-use std::net::ToSocketAddrs;
+use std::net::SocketAddr;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
@@ -61,8 +62,8 @@ struct ServerShared<Req: Message, Resp: Message> {
 /// rt.block_on(async move {
 ///     let (mut server, mut rx) = Server::<Request, Response>::new();
 ///     server.enable_broadcast_reqrep(true); // requests are broadcasted to all clients
-///     server.listen_ws("0.0.0.0:8000").await;
-///     server.listen_http("0.0.0.0:8001").await;
+///     server.listen_ws(&"0.0.0.0:8000".parse().unwrap()).await;
+///     server.listen_http(&"0.0.0.0:8001".parse().unwrap()).await;
 ///     while let Some(_request) = rx.recv().await {
 ///         // do something with request
 ///         // let response = handle(request);
@@ -220,12 +221,9 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
     /// Listen for WebSocket connections on the given socket address.
     ///
     /// This function may be called several times to spawn multiple sockets.
-    pub async fn listen_ws<A: ToSocketAddrs>(&self, addr: A) {
+    pub async fn listen_ws(&self, addr: &SocketAddr) -> io::Result<()> {
         info!("WsRpc Server Listening");
-        let mut addr = addr.to_socket_addrs().unwrap();
-        let mut listener = TcpListener::bind(addr.next().unwrap())
-            .await
-            .expect("Failed to bind");
+        let mut listener = TcpListener::bind(addr).await?;
 
         let (cancel_tx, cancel_rx) = oneshot::channel();
         {
@@ -246,6 +244,8 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
             }
             debug!("Dropping ws listener.");
         });
+
+        Ok(())
     }
 
     pub(crate) async fn dispatch_request(&self, req: Requested<Req, Resp>) -> bool {
@@ -273,7 +273,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
     /// Listen on socket address for HTTP requests
     ///
     /// This function may called several times to spawn multiple HTTP endpoints.
-    pub async fn listen_http<T: ToSocketAddrs>(&self, http_addr: T) {
+    pub async fn listen_http(&self, http_addr: &SocketAddr) {
         let abort_handle = HttpServer::spawn(http_addr, self.clone());
         let mut write = self.inner.write().unwrap();
         write.abort_handles.push(abort_handle);
@@ -516,7 +516,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
     }
 
     /// Shutdown the server, disconnecting all clients.
-    pub async fn shutdown(&self) {
+    pub fn shutdown(&self) {
         info!("Closing all client connections.");
         let mut write = self.inner.write().unwrap();
         for con in write.connections.values() {
@@ -542,6 +542,7 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
 #[cfg(test)]
 mod tests {
     use serde::{Deserialize, Serialize};
+    use std::net::SocketAddr;
 
     #[derive(Clone, Serialize, Deserialize)]
     enum Request {
@@ -566,7 +567,7 @@ mod tests {
         let msg = rx.recv().await.unwrap();
         let (req, _) = msg.split();
         assert!(matches!(req, Request::Shutdown));
-        server.shutdown().await;
+        server.shutdown();
     }
 
     #[tokio::test]
@@ -582,6 +583,15 @@ mod tests {
             _ => panic!(),
         }
 
-        server.shutdown().await;
+        server.shutdown();
+    }
+
+    #[tokio::test]
+    async fn listen_ws() -> anyhow::Result<()> {
+        let (server, _) = Server::new();
+        let addr: SocketAddr = "127.0.0.1:11234".parse()?;
+        server.listen_ws(&addr).await?;
+        server.shutdown();
+        Ok(())
     }
 }

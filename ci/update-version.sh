@@ -6,7 +6,43 @@ cd $(dirname "$0")/..
 
 version=$(grep -m 1 -oE '## \[.*?\]' CHANGELOG.md | sed -e 's/[# \[]//g' -e 's/\]//g')
 
-rg '^version = \"[\d\.]+"' --iglob 'rust/Cargo.toml' --iglob "pyproject.toml" -m 1 -r "version = \"${version}\"" -q
-rg '^version: [\d\.]+' --iglob dart/broadcast_wsrpc/pubspec.yaml --iglob "pyproject.toml" -m 1 -r "version: ${version}" -q
+
+replace_version_toml() {
+python_script=$(cat <<EOF
+import re
+
+with open("$1", "r") as f:
+    content = f.read()
+
+content = re.sub(r'version = "[\d\.]+"', 'version = "${version}"', content, count=1)
+
+with open("$1", "w") as f:
+    f.write(content)
+EOF
+)
+
+python -c "$python_script"
+}
+
+replace_version_yaml() {
+python_script=$(cat <<EOF
+import re
+
+with open("$1", "r") as f:
+    content = f.read()
+
+content = re.sub(r'version: [\d\.]+', 'version: ${version}', content, count=1)
+
+with open("$1", "w") as f:
+    f.write(content)
+EOF
+)
+python -c "$python_script"
+}
+
+
+replace_version_toml rust/Cargo.toml
+replace_version_toml pyproject.toml
+replace_version_yaml dart/broadcast_wsrpc/pubspec.yaml
 
 ./ci/check_version.sh

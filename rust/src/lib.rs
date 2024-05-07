@@ -47,8 +47,8 @@
 //! rt.block_on(async move {
 //!     let (mut server, mut rx) = Server::<Request, Response>::new();
 //!     server.enable_broadcast_reqrep(true); // requests are broadcasted to all clients
-//!     server.listen_ws("0.0.0.0:8000").await;
-//!     server.listen_http("0.0.0.0:8001").await;
+//!     server.listen_ws(&"0.0.0.0:8000".parse().unwrap()).await;
+//!     server.listen_http(&"0.0.0.0:8001".parse().unwrap()).await;
 //!     while let Some(_request) = rx.recv().await {
 //!         // do something with request
 //!         // let response = handle(request);
