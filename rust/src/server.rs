@@ -25,6 +25,7 @@ use tokio::time::Duration;
 use tokio_stream::StreamExt;
 use uuid::Uuid;
 
+use crate::connection::Sender;
 use crate::http::HttpServer;
 use crate::{Message, Request, Response};
 
@@ -38,11 +39,9 @@ pub(crate) enum SenderMsg<Req: Message, Resp: Message> {
     Pong(Vec<u8>),
     Message(Response<Req, Resp>),
 }
-
 struct ServerShared<Req: Message, Resp: Message> {
-    connections: HashMap<Uuid, UnboundedSender<SenderMsg<Req, Resp>>>,
-    abort_handles: Vec<oneshot::Sender<()>>,
-    tx_req: Option<UnboundedSender<Requested<Req, Resp>>>,
+    connections: HashMap<Uuid, Sender>,
+    tx_req: UnboundedSender<Requested<Req, Resp>>,
 }
 
 ///
@@ -218,34 +217,15 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         self.broadcast_reqrep.store(enable_reqrep, Ordering::SeqCst);
     }
 
-    /// Listen for WebSocket connections on the given socket address.
-    ///
-    /// This function may be called several times to spawn multiple sockets.
-    pub async fn listen_ws(&self, addr: &SocketAddr) -> io::Result<()> {
-        info!("WsRpc Server Listening");
-        let mut listener = TcpListener::bind(addr).await?;
+    pub fn register_sender(&self, tx: Sender) -> Uuid {
+        let mut write = self.inner.write().unwrap();
+        let id = Uuid::new_v4();
+        write.connections.insert(id, tx);
+        id
+    }
 
-        let (cancel_tx, cancel_rx) = oneshot::channel();
-        {
-            let mut write = self.inner.write().unwrap();
-            write.abort_handles.push(cancel_tx);
-        }
-
-        let server = self.clone();
-        task::spawn(async move {
-            let accept_loop = async move {
-                loop {
-                    server.ws_accept(&mut listener).await
-                }
-            };
-            tokio::select! {
-                _ = accept_loop => {},
-                _ = cancel_rx => {},
-            }
-            debug!("Dropping ws listener.");
-        });
-
-        Ok(())
+    pub fn disconnect_sender(&self, id: Uuid) {
+        self.remove_client(&id);
     }
 
     pub(crate) async fn dispatch_request(&self, req: Requested<Req, Resp>) -> bool {
@@ -257,31 +237,9 @@ impl<Req: 'static + Message + DeserializeOwned, Resp: 'static + Message> Server<
         }
     }
 
-    async fn ws_accept(&self, listener: &mut TcpListener) {
-        if let Ok((stream, path)) = listener.accept().await {
-            info!("Client connected on: {}", path);
-            let (tx_resp, rx_resp) = unbounded_channel();
-            let id = Uuid::new_v4();
-            {
-                let mut write = self.inner.write().unwrap();
-                write.connections.insert(id, tx_resp.clone());
-            }
-            self.clone().run_client(id, stream, rx_resp, tx_resp).await;
-        }
-    }
-
-    /// Listen on socket address for HTTP requests
-    ///
-    /// This function may called several times to spawn multiple HTTP endpoints.
-    pub async fn listen_http(&self, http_addr: &SocketAddr) {
-        let abort_handle = HttpServer::spawn(http_addr, self.clone());
-        let mut write = self.inner.write().unwrap();
-        write.abort_handles.push(abort_handle);
-    }
-
     /// Create a local [`LoopbackClient`] which allows sending requests without opening any sockets.
     pub async fn loopback(&self) -> LoopbackClient<Req, Resp> {
-        let (client_tx, mut client_rx) = unbounded_channel::<Request<Req>>();
+        let (client_tx, mut client_rx) = unbounded_channel();
         let (sender_tx, mut sender_rx) = unbounded_channel();
         let (network_tx, network_rx) = unbounded_channel();
         let client_id = Uuid::new_v4();

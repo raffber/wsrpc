@@ -88,6 +88,7 @@ use std::fmt::{Debug, Formatter};
 use uuid::Uuid;
 
 pub mod client;
+pub mod connection;
 mod http;
 pub mod server;
 
