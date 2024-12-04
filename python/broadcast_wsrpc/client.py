@@ -4,7 +4,7 @@ from asyncio import Queue, QueueFull
 from typing import Any, Awaitable, Callable, Dict, Generic, List, TypeVar
 from uuid import uuid4
 
-from broadcast_wsrpc import JsonDict, JsonType
+from broadcast_wsrpc import JsonObject, JsonType
 import msgpack  # type: ignore
 from websockets import WebSocketClientProtocol, connect
 
@@ -35,14 +35,14 @@ class Receiver(Generic[T]):
     by calling `receiver.map(...)`. Refer to the `receiver.map()` function for more details.
     """
 
-    def __init__(self, client: "Client", flt: Callable[[JsonDict], T | None]) -> None:
+    def __init__(self, client: "Client", flt: Callable[[JsonObject], T | None]) -> None:
         self._queue: Queue[T] = Queue(RX_QUEUE_SIZE)
         self._client = client
         self._flt = flt
         self._connected = False
 
     @property
-    def flt(self) -> Callable[[JsonDict], T | None]:
+    def flt(self) -> Callable[[JsonObject], T | None]:
         """
         Return the filter-map function to be applied to messages
         """
@@ -80,7 +80,7 @@ class Receiver(Generic[T]):
         Disconnect from the client and stop listening to incoming messages
         """
         if self._connected:
-            self._client._unregister(self)
+            self._client.unregister(self)
             self._connected = False
         return self
 
@@ -89,7 +89,7 @@ class Receiver(Generic[T]):
         Connect to the client and start listening to incoming messages
         """
         if not self._connected:
-            self._client._register(self)
+            self._client.register(self)
             self._connected = True
         return self
 
@@ -104,7 +104,7 @@ class Receiver(Generic[T]):
         Retrieve all messages from the internal buffer without blocking.
         This should only be used for debugging purposes.
         """
-        ret = []
+        ret: List[T] = []
         while True:
             try:
                 rx = self._queue.get_nowait()
@@ -131,7 +131,7 @@ class Receiver(Generic[T]):
         """
         flt = self._flt
 
-        def new_fun(x: JsonDict) -> M | None:
+        def new_fun(x: JsonObject) -> M | None:
             y = flt(x)
             if y is not None:
                 return fun(y)
@@ -149,7 +149,7 @@ class Client(object):
 
     def __init__(self) -> None:
         self._ws: WebSocketClientProtocol | None = None
-        self._receivers: Dict[int, Receiver] = {}
+        self._receivers: Dict[int, Receiver[Any]] = {}
 
     async def connect(self, url: str, **kw: Any) -> "Client":
         """
@@ -181,15 +181,15 @@ class Client(object):
                 break
             try:
                 if isinstance(msg, bytes):
-                    parsed_msg: JsonDict = msgpack.unpackb(msg)  # type: ignore
+                    parsed_msg: JsonObject = msgpack.unpackb(msg)  # type: ignore
                 else:
-                    parsed_msg: JsonDict = json.loads(msg)  # type: ignore
+                    parsed_msg: JsonObject = json.loads(msg)  # type: ignore
             except Exception:
                 continue
             for receiver in self._receivers.values():
                 try:
                     assert isinstance(receiver, Receiver)
-                    mapped = receiver.flt(parsed_msg)
+                    mapped = receiver.flt(parsed_msg) # type: ignore
                     if mapped is not None:
                         try:
                             receiver.queue.put_nowait(mapped)
@@ -203,16 +203,11 @@ class Client(object):
                     continue
         self._ws = None
 
-    def listen(self, flt: Callable[[JsonDict], T | None]) -> Receiver[T]:
+    def listen(self, flt: Callable[[JsonObject], T | None]) -> Receiver[T]:
         """
         Listen to messages on the buf, optionally applying the `flt` filter-map function.
         Refer to the documentation of the `Reciever` class for more information.
         """
-        if flt is None:
-
-            def flt(x):
-                return
-
         rx = Receiver(self, flt)
         return rx
 
@@ -220,7 +215,7 @@ class Client(object):
         """
         Return a `Receiver` filtering messages for `Reply` messages.
         """
-        return self.listen(lambda x: x["Reply"]["message"] if "Reply" in x else None)
+        return self.listen(lambda x: x["Reply"]["message"] if "Reply" in x else None) # type: ignore
 
     def notifications(self) -> Receiver[JsonType]:
         """
@@ -233,19 +228,19 @@ class Client(object):
         Return a `Receiver` filtering messages for `Notification` and `Reply` messages.
         """
 
-        def mapper(x: JsonDict) -> JsonType:
+        def mapper(x: JsonObject) -> JsonType:
             if "Reply" in x:
-                return x["Reply"]["message"]
+                return x["Reply"]["message"] # type: ignore
             elif "Notify" in x:
                 return x["Notify"]
             return None
 
         return self.listen(mapper)
 
-    def _register(self, rx: Receiver) -> None:
+    def register(self, rx: Receiver[Any]) -> None:
         self._receivers[id(rx)] = rx
 
-    def _unregister(self, rx: Receiver) -> None:
+    def unregister(self, rx: Receiver[Any]) -> None:
         key = id(rx)
         if key in self._receivers:
             del self._receivers[id(rx)]
@@ -267,10 +262,10 @@ class Client(object):
         """
         id = str(uuid4())
 
-        def flt(msg: JsonDict) -> JsonType | None:
-            ret = "Reply" in msg and msg["Reply"]["request"] == id
+        def flt(msg: JsonObject) -> JsonType | None:
+            ret = "Reply" in msg and msg["Reply"]["request"] == id # type: ignore
             if ret:
-                return msg["Reply"]["message"]
+                return msg["Reply"]["message"] # type: ignore
             return None
 
         with self.listen(flt) as rx:

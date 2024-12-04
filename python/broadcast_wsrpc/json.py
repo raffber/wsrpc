@@ -1,5 +1,5 @@
-from typing import TypeAlias
+from typing import Sequence, TypeAlias, Mapping
 
-JsonType: TypeAlias = dict[str, "JsonType"] | list["JsonType"] | str | int | float | bool | None
-JsonObject: TypeAlias = dict[str, JsonType]
+JsonType: TypeAlias = Mapping[str, "JsonType"] | Sequence["JsonType"] | str | int | float | bool | None
+JsonObject: TypeAlias = Mapping[str, JsonType]
 JsonArray: TypeAlias = list[JsonType]

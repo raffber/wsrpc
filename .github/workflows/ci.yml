@@ -58,7 +58,7 @@ jobs:
 
       - name: Check types
         run: |
-          ./pw types
+          make python-lint
 
       - name: Build Wheel
         run: |

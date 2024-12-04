@@ -1,7 +1,7 @@
 import asyncio
 
 from broadcast_wsrpc import JsonType
-from broadcast_wsrpc.client import Client
+from broadcast_wsrpc.client import Client, Receiver
 from broadcast_wsrpc.server import Server
 import pytest
 
@@ -18,7 +18,7 @@ async def test_listener() -> None:
     await asyncio.sleep(0.1)
 
     client = await Client().connect("ws://127.0.0.1:1234")
-    listener = (
+    listener: Receiver[JsonType] = (
         client.listen(lambda x: x["Reply"]["message"] if "Reply" in x else None)  # type: ignore
         .map(lambda x: x["foo"] if "foo" in x else None)  # type: ignore
         .map(lambda x: x["bar"] if "bar" in x else None)  # type: ignore
