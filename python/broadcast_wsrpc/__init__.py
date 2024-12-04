@@ -1,11 +1,6 @@
-from typing import Any, Dict, List
-
-JsonDict = Dict[str, Any]
-JsonList = List[Any]
-JsonType = None | int | str | bool | JsonList | JsonDict
-
-from .client import Client  # noqa
-from .server import Server  # noqa
+from .json import JsonDict, JsonList, JsonType
+from .client import Client
+from .server import Server
 
 
 __all__ = ["Client", "Server", "JsonDict", "JsonList", "JsonType"]

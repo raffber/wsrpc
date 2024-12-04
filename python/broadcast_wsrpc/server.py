@@ -1,7 +1,7 @@
 import asyncio
 import json
 from asyncio import Task, iscoroutinefunction
-from typing import Any, Callable, Coroutine, Dict
+from typing import Any, Awaitable, Callable, Dict
 from uuid import UUID
 
 from broadcast_wsrpc import JsonType
@@ -38,7 +38,7 @@ REQUEST_SCHEMA = {
     "message": {"type": "object"},
 }
 
-HandlerType = Callable[["Server", JsonType], JsonType | Coroutine[Any, Any, JsonType]]
+HandlerType = Callable[["Server", JsonType], JsonType | Awaitable[JsonType]]
 
 
 class Server(object):
@@ -115,7 +115,7 @@ class Server(object):
         """
         Close all connections and shut down the server
         """
-        for connection, task in list(self._connected.items()):
+        for connection, _ in list(self._connected.items()):
             await connection.close()
         if self._server is not None:
             self._server.close()
@@ -169,7 +169,7 @@ class Connection(object):
             if isinstance(msg, str):
                 msg = json.loads(msg)
             else:  # isinstance(msg, bytes)
-                msg = msgpack.unpackb(msg)
+                msg = msgpack.unpackb(msg) # type: ignore
         except Exception:
             await self._server.send_error("Invalid JSON")
             return
@@ -180,18 +180,22 @@ class Connection(object):
             await self._server.send_error("Invalid UUID")
             return
         id = msg["id"]  # type: ignore
+        if not isinstance(id, str):
+            await self._server.send_error("Invalid UUID")
+            return
         try:
-            UUID(id)
+            _ = UUID(id) # type: ignore
         except ValueError:
             await self._server.send_error("Invalid UUID")
             return
         # call back into the application
         handler = self._server.handler
         try:
+            content: JsonType = msg["message"] # type: ignore
             if iscoroutinefunction(handler):
-                reply = await handler(self._server, msg["message"])  # type: ignore
+                reply: JsonType = await handler(self._server, content) # type: ignore
             else:
-                reply = handler(self._server, msg["message"])  # type: ignore
+                reply: JsonType = handler(self._server, content) # type: ignore
         except InvalidRequest as e:
             await self._server.send_invalid_request(id, e.message)
             return
