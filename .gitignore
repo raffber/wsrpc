@@ -12,3 +12,4 @@ target
 .pyprojectx
 .venv
 dist/
+.env
