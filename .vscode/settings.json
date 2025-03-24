@@ -1,7 +1,5 @@
 {
   "editor.formatOnSave": true,
   "python.defaultInterpreterPath": ".venv/bin/python",
-  "[python]": {
-    "editor.defaultFormatter": "ms-python.black-formatter"
-  }
+  "files.insertFinalNewline": true,
 }

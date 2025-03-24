@@ -1,41 +1,34 @@
-[tool.poetry]
+[project]
 name = "broadcast_wsrpc"
 version = "0.3.1"
 description = "WebSocket & HTTP RPC library"
-authors = ["Raphael Bernhard <beraphae@gmail.com>"]
-packages = [{ include = "broadcast_wsrpc", from = "python" }]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["msgpack~=1.0", "websockets >=10, <=12"]
 
-[tool.poetry.dependencies]
-python = ">=3.10, <4.0"
-msgpack = "^1.0"
-websockets = ">=10, <=12"
-
-[tool.poetry.group.dev.dependencies]
-ruff = "^0.4.1"
-poetry = "^1.8.2"
-pytest = "^7.4.3"
-pytest-asyncio = "^0.23.6"
-pyright = { version = "*", extras = ["nodejs"] }
+[dependency-groups]
+dev = [
+    "ipykernel>=6.29.5",
+    "ruff~=0.11.2",
+    "pytest~=7.4.3",
+    "pytest-asyncio~=0.23.6",
+    "pyright",
+    "twine~=6.1.0",
+]
 
 [build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["python/broadcast_wsrpc"]
 
 [tool.pyprojectx]
-poetry = "poetry==1.8.2"
-
-[tool.pyprojectx.aliases]
-install = "poetry install"
-run = "poetry run"
-outdated = "poetry show --outdated"
-test = "poetry run pytest"
-build = "poetry build --format wheel"
-check = "poetry run ruff check python/broadcast_wsrpc"
+uv = "uv==0.6.9"
 
 [tool.pytest.ini_options]
 testpaths = ["python/broadcast_wsrpc"]
 python_files = "/*/test_*.py"
 
 [tool.pyright]
-include = ["poke"]
 typeCheckingMode = "strict"

@@ -35,3 +35,9 @@ python-check: ## Run type check
 python-test: ## Run python tests
 	cd $(curdir)
 	$(python) -m pytest 
+
+
+build-wheel: ## Build wheel
+	cd $(curdir)
+	rm -rf dist/
+	uv build --wheel

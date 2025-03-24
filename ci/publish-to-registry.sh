@@ -20,4 +20,4 @@ username = ${CUSTOM_REGISTRY_USERNAME}
 password = ${CUSTOM_REGISTRY_PASSWORD}
 EOF
 
-./pw poetry run twine upload --repository custom-registry "$wheel" --verbose
+uv run twine upload --repository custom-registry "$wheel" --verbose
